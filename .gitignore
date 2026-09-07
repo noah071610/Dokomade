@@ -1,0 +1,12 @@
+node_modules
+Master.md
+
+# dokomade runtime state
+.dokomade/state.json
+.dokomade/pending.jsonl
+.dokomade/queue.jsonl
+.dokomade/perf.jsonl
+docs/*
+
+*.tgz
+dist

@@ -1,0 +1,20 @@
+{
+  "logDir": "docs/dokomade",
+  "projectType": "frontend",
+  "classify": {
+    "frontend": {
+      "pageDirs": [
+        "."
+      ],
+      "sharedDirs": []
+    },
+    "backend": {
+      "routeDirs": []
+    }
+  },
+  "integrations": {
+    "notion": false,
+    "slack": false,
+    "sheets": false
+  }
+}
