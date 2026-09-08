@@ -22,7 +22,7 @@ import {
 } from "./markdown.js";
 import { retitle } from "../commands/retitle.js";
 import { MechanicalSummarizer } from "./summarize.js";
-import { DEFAULT_CONFIG, findRoot, paths, readConfig, writeJSON } from "./store.js";
+import { DEFAULT_CONFIG, findRoot, paths, readConfig, writeConfig, writeJSON } from "./store.js";
 import { CLOSE_MARK, OPEN_MARK, extractMessage } from "./ai.js";
 
 const cfg = DEFAULT_CONFIG.classify;
@@ -75,6 +75,21 @@ describe("config", () => {
     writeJSON(paths(root).config, { projectType: "library" });
 
     expect(readConfig(paths(root)).projectType).toBe("library");
+  });
+
+  it("reads back a written config despite its comments", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "dkmd-config-"));
+    const p = paths(root);
+    const written = {
+      ...DEFAULT_CONFIG,
+      // A value carrying `//` inside a string: the comment stripper must keep it.
+      logDir: "https://example.com/logs",
+      commit: { ...DEFAULT_CONFIG.commit, ai: "claude" as const, aiConfigured: true },
+    };
+    writeConfig(p, written);
+
+    expect(fs.readFileSync(p.config, "utf8")).toContain("// Where work logs are written");
+    expect(readConfig(p)).toEqual(written);
   });
 });
 

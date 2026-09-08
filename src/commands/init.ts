@@ -23,9 +23,11 @@ import {
   paths,
   readJSON,
   readConfig,
+  writeConfig,
   writeJSON,
   type AiCliId,
   type Config,
+  type Paths,
   type ProjectType,
 } from "../core/store.js"
 
@@ -545,6 +547,21 @@ function updateGitignore(root: string): string[] {
   return missing
 }
 
+/**
+ * A re-run of `init` on a project that already has logs is normally a config
+ * change, not a fresh start - so the wipe is opt-in and asked only when there
+ * is something to wipe. Runtime state goes with the logs: state.json and the
+ * jsonl ledgers point at rows that would no longer exist.
+ */
+async function resetLogs(root: string, logDir: string, p: Paths): Promise<boolean> {
+  const dir = path.join(root, logDir)
+  if (!fs.existsSync(dir)) return false
+  if (!(await confirmPrompt(`Delete existing logs in ${logDir}/ and start over?`, false))) return false
+  fs.rmSync(dir, { recursive: true, force: true })
+  for (const file of [p.state, p.pending, p.queue, p.perf]) fs.rmSync(file, { force: true })
+  return true
+}
+
 export async function init(cwd: string = process.cwd()): Promise<void> {
   const root = guessRoot(cwd)
   const p = paths(root)
@@ -555,8 +572,9 @@ export async function init(cwd: string = process.cwd()): Promise<void> {
   console.log(`${c.dim}${fig.line}${c.reset}`)
 
   fs.mkdirSync(p.dir, { recursive: true })
-  const configured = await setupConfig(root)
   const existing = readConfig(p)
+  const wiped = await resetLogs(root, existing.logDir, p)
+  const configured = await setupConfig(root)
   const config: Config = {
     ...configured,
     logDir: existing.logDir,
@@ -566,7 +584,7 @@ export async function init(cwd: string = process.cwd()): Promise<void> {
       aiConfigured: existing.commit.aiConfigured,
     },
   }
-  writeJSON(p.config, config)
+  writeConfig(p, config)
 
   const settingsFile = path.join(root, ".claude", "settings.json")
   const settings = readJSON<Settings>(settingsFile, {})
@@ -645,6 +663,11 @@ export async function init(cwd: string = process.cwd()): Promise<void> {
   )
   if (commands.length > 0) {
     console.log(`  ${c.cyan}${fig.bullet}${c.reset} ${c.dim}commands${c.reset}     ${commands.join(", ")}`)
+  }
+  if (wiped) {
+    console.log(
+      `  ${c.cyan}${fig.bullet}${c.reset} ${c.dim}reset${c.reset}        ${c.yellow}${config.logDir}/ and runtime state deleted${c.reset}`,
+    )
   }
   if (ignored.length > 0) {
     console.log(

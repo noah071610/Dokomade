@@ -203,12 +203,60 @@ export function readJSON<T>(file: string, fallback: T): T {
   }
 }
 
+/**
+ * Drop `//` line comments that sit outside a string.
+ *
+ * Only config.json is read this way: it ships annotations so the file explains
+ * itself without a second document. Scanning for the quote state rather than
+ * regex-replacing matters - `"logDir": "https://x"` and a Windows UNC path both
+ * contain `//` inside a value, and a naive strip would eat the rest of the line.
+ */
+function stripLineComments(src: string): string {
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (inString) {
+      out += ch;
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      out += ch;
+      continue;
+    }
+    if (ch === "/" && src[i + 1] === "/") {
+      while (i < src.length && src[i] !== "\n") i++;
+      out += "\n";
+      continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
+export function readJSONC<T>(file: string, fallback: T): T {
+  try {
+    return JSON.parse(stripLineComments(fs.readFileSync(file, "utf8"))) as T;
+  } catch {
+    return fallback;
+  }
+}
+
 /** Write via tmp + rename so a crashed hook never leaves a half-written file. */
-export function writeJSON(file: string, value: unknown): void {
+export function writeText(file: string, text: string): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`);
+  fs.writeFileSync(tmp, text);
   fs.renameSync(tmp, file);
+}
+
+export function writeJSON(file: string, value: unknown): void {
+  writeText(file, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 /**
@@ -259,7 +307,7 @@ export function readState(p: Paths): State {
 }
 
 export function readConfig(p: Paths): Config {
-  const raw = readJSON<Partial<Config>>(p.config, {});
+  const raw = readJSONC<Partial<Config>>(p.config, {});
   const aiConfigured =
     typeof raw.commit?.aiConfigured === "boolean" ? raw.commit.aiConfigured : raw.commit?.ai !== undefined;
   return {
@@ -285,6 +333,65 @@ export function readConfig(p: Paths): Config {
     },
     integrations: { ...DEFAULT_CONFIG.integrations, ...raw.integrations },
   };
+}
+
+/**
+ * Write config.json with its options annotated in place.
+ *
+ * Hand-rolled rather than `JSON.stringify`, because the file is the only
+ * documentation most users will read: every key gets the one line that says
+ * what changing it does. Comments are `//` line comments - `readConfig` strips
+ * them, and every editor already highlights the file as JSONC.
+ */
+export function writeConfig(p: Paths, config: Config): void {
+  const j = (v: unknown): string => JSON.stringify(v);
+  writeText(
+    p.config,
+    `{
+  // Where work logs are written: <logDir>/<author>/<YYYY-MM-DD>.md
+  "logDir": ${j(config.logDir)},
+
+  // frontend | backend | fullstack | library - decides how changed files are classified.
+  "projectType": ${j(config.projectType)},
+
+  // Repo-relative directories the classifier matches changed paths against.
+  "classify": {
+    "frontend": {
+      // Pages and route entry points; an edit here is logged as a page change.
+      "pageDirs": ${j(config.classify.frontend.pageDirs)},
+      // Components and helpers shared across pages.
+      "sharedDirs": ${j(config.classify.frontend.sharedDirs)}
+    },
+    "backend": {
+      // API route handlers; edits here are grouped per REST domain.
+      "routeDirs": ${j(config.classify.backend.routeDirs)}
+    }
+  },
+
+  "commit": {
+    // Days of log files \`dokomade commit\` scans for staged rows. Minimum 1.
+    "windowDays": ${j(config.commit.windowDays)},
+    // Conventional Commits reference, relative to the repo root.
+    "convention": ${j(config.commit.convention)},
+    // CLI that writes the message when committing from a bare terminal:
+    // claude | codex | cursor | gemini | none ("none" prints the brief instead).
+    "ai": ${j(config.commit.ai)},
+    // Set once the CLI above has been chosen; false makes commit ask again.
+    "aiConfigured": ${j(config.commit.aiConfigured)},
+    // Spend tokens describing changed files that have no log row. Off by
+    // default: what survives the noise filter is usually nothing.
+    "analyzeOrphans": ${j(config.commit.analyzeOrphans)}
+  },
+
+  // Extra log destinations beyond the markdown files; each needs its own credentials.
+  "integrations": {
+    "notion": ${j(config.integrations.notion)},
+    "slack": ${j(config.integrations.slack)},
+    "sheets": ${j(config.integrations.sheets)}
+  }
+}
+`,
+  );
 }
 
 /** Hook wall time, for the §13 "measure before choosing a launcher" decision. */

@@ -46,7 +46,7 @@ import {
   paths,
   readConfig,
   readJSONL,
-  writeJSON,
+  writeConfig,
   type Config,
   type Paths,
   type QueueEntry,
@@ -105,7 +105,7 @@ const FALLBACK_CONVENTION = [
   "type: feat | fix | docs | style | refactor | test | chore | perf",
   "subject: start lowercase, no period, imperative verb, 50 characters max",
   "scope: optional. affected module/area",
-  'body: why it changed. Omit if self-explanatory',
+  "body: why it changed. Omit if self-explanatory",
 ].join("\n")
 
 function conventionText(root: string, config: Config): string {
@@ -171,7 +171,9 @@ function buildBrief(
     briefRows.length > 0
       ? [
           briefRows.map((r) => `- ${r.time} ${r.summary}`).join("\n"),
-          ...(rows.length > MAX_BRIEF_LOG_ROWS ? [`- ... ${rows.length - MAX_BRIEF_LOG_ROWS} earlier log rows omitted`] : []),
+          ...(rows.length > MAX_BRIEF_LOG_ROWS
+            ? [`- ... ${rows.length - MAX_BRIEF_LOG_ROWS} earlier log rows omitted`]
+            : []),
         ].join("\n")
       : "(No log rows)",
   ]
@@ -241,10 +243,115 @@ function writeOrphanRow(root: string, config: Config, orphans: string[], title: 
   return file
 }
 
+const isColorSupported = !process.env.NO_COLOR && (Boolean(process.stdout.isTTY) || Boolean(process.env.FORCE_COLOR))
+
+const c = {
+  reset: isColorSupported ? "\x1b[0m" : "",
+  bold: isColorSupported ? "\x1b[1m" : "",
+  dim: isColorSupported ? "\x1b[2m" : "",
+  cyan: isColorSupported ? "\x1b[36m" : "",
+  green: isColorSupported ? "\x1b[32m" : "",
+  yellow: isColorSupported ? "\x1b[33m" : "",
+  red: isColorSupported ? "\x1b[31m" : "",
+  gray: isColorSupported ? "\x1b[90m" : "",
+  white: isColorSupported ? "\x1b[37m" : "",
+}
+
+const isUnicode = process.platform !== "win32" || Boolean(process.env.WT_SESSION || process.env.TERM_PROGRAM)
+
+const fig = {
+  pointer: isUnicode ? "❯" : ">",
+  tick: isUnicode ? "✔" : "√",
+  cross: isUnicode ? "✖" : "x",
+  step: isUnicode ? "◇" : "?",
+  bullet: isUnicode ? "•" : "*",
+  line: isUnicode ? "│" : "|",
+  cornerTop: isUnicode ? "╭" : "+",
+  cornerBottom: isUnicode ? "╰" : "+",
+  dash: isUnicode ? "─" : "-",
+  warning: isUnicode ? "▲" : "!",
+}
+
+function formatSubject(subject: string): string {
+  const match = subject.match(/^([a-z]+)(\([^)]+\))?(!?):\s*(.*)$/i)
+  if (!match) return `${c.bold}${c.white}${subject}${c.reset}`
+  const [, type, scope, bang, rest] = match
+  const scopePart = scope ? `${c.dim}(${c.reset}${c.cyan}${scope.slice(1, -1)}${c.reset}${c.dim})${c.reset}` : ""
+  const bangPart = bang ? `${c.red}!${c.reset}` : ""
+  return `${c.bold}${c.cyan}${type}${scopePart}${bangPart}${c.dim}:${c.reset} ${c.bold}${c.white}${rest}${c.reset}`
+}
+
+function formatCommitLine(line: string): string {
+  const trimmed = line.trim()
+  if (!trimmed) return ""
+  if (/^[-*]\s+/.test(line)) {
+    const bulletContent = line.replace(/^[-*]\s+/, "")
+    return `${c.cyan}${fig.bullet}${c.reset} ${c.white}${bulletContent}${c.reset}`
+  }
+  if (/^\d+\.\s+/.test(line)) {
+    const match = line.match(/^(\d+\.)\s+(.*)$/)
+    if (match) {
+      return `${c.cyan}${match[1]}${c.reset} ${c.white}${match[2]}${c.reset}`
+    }
+  }
+  return `${c.white}${line}${c.reset}`
+}
+
+interface CommitPreviewMeta {
+  stagedCount: number
+  stageRows: number
+  branch: string
+  orphansCount: number
+}
+
+function renderCommitPreview(message: string, meta: CommitPreviewMeta): void {
+  const lines = message.split("\n")
+  const subject = lines[0] ?? ""
+  const body = lines.slice(1)
+
+  while (body.length > 0 && !body[body.length - 1]?.trim()) {
+    body.pop()
+  }
+
+  const fileCountStr = meta.stagedCount === 1 ? "1 staged file" : `${meta.stagedCount} staged files`
+  const rowCountStr = meta.stageRows === 1 ? "1 log row" : `${meta.stageRows} log rows`
+
+  const metaParts = [
+    `${c.bold}${fileCountStr}${c.reset}`,
+    `${c.bold}${rowCountStr}${c.reset}`,
+    `${c.dim}branch:${c.reset} ${c.cyan}${meta.branch}${c.reset}`,
+  ]
+  if (meta.orphansCount > 0) {
+    const orphanStr = meta.orphansCount === 1 ? "1 unlogged file" : `${meta.orphansCount} unlogged files`
+    metaParts.push(`${c.yellow}${fig.warning} ${orphanStr}${c.reset}`)
+  }
+
+  console.log(
+    `\n  ${c.cyan}${fig.cornerTop}${fig.dash}${fig.dash}${c.reset} ${c.bold}${c.white}Commit Preview${c.reset}`,
+  )
+  console.log(`  ${c.dim}${fig.line}${c.reset}`)
+  console.log(`  ${c.dim}${fig.line}${c.reset}  ${formatSubject(subject)}`)
+
+  if (body.length > 0) {
+    for (const raw of body) {
+      const formatted = formatCommitLine(raw)
+      if (!formatted) {
+        console.log(`  ${c.dim}${fig.line}${c.reset}`)
+      } else {
+        console.log(`  ${c.dim}${fig.line}${c.reset}  ${formatted}`)
+      }
+    }
+  }
+
+  console.log(`  ${c.dim}${fig.line}${c.reset}`)
+  console.log(`  ${c.cyan}${fig.cornerBottom}${c.reset}  ${metaParts.join(` ${c.dim}·${c.reset} `)}\n`)
+}
+
 async function confirm(question: string): Promise<boolean> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
   try {
-    const answer = (await rl.question(`${question} [y/N] `)).trim().toLowerCase()
+    const promptText = `  ${c.cyan}?${c.reset}  ${c.bold}${question}${c.reset} ${c.dim}[${c.reset}${c.green}${c.bold}y${c.reset}${c.dim}/${c.reset}${c.yellow}${c.bold}N${c.reset}${c.dim}]${c.reset} ${c.cyan}${fig.pointer}${c.reset} `
+    const answer = (await rl.question(promptText)).trim().toLowerCase()
     return answer === "y" || answer === "yes"
   } finally {
     rl.close()
@@ -252,7 +359,7 @@ async function confirm(question: string): Promise<boolean> {
 }
 
 function fail(message: string): false {
-  console.error(message)
+  console.error(`\n  ${c.red}${fig.cross}${c.reset}  ${c.red}${message}${c.reset}\n`)
   process.exitCode = 1
   return false
 }
@@ -296,33 +403,45 @@ export async function commit(opts: CommitOptions, cwd: string = process.cwd()): 
     if (!config.commit.aiConfigured) {
       config.commit.ai = await selectAiCli()
       config.commit.aiConfigured = true
-      writeJSON(p.config, config)
+      writeConfig(p, config)
       gitPassthrough(root, ["add", "--", path.relative(root, p.config)])
     }
   }
   if (!message && opts.ai !== false && config.commit.ai !== "none") {
-    console.error(`Requesting a commit message from ${config.commit.ai}... (using your token)`)
+    console.error(
+      `\n  ${c.cyan}${fig.step}${c.reset}  ${c.dim}Requesting commit message from${c.reset} ${c.cyan}${c.bold}${config.commit.ai}${c.reset}${c.dim}...${c.reset}`,
+    )
     message = runAi(config.commit.ai, brief.text, root) ?? undefined
-    if (!message) console.error(`No response from ${config.commit.ai}.`)
+    if (!message) {
+      console.error(
+        `  ${c.yellow}${fig.warning}${c.reset}  ${c.yellow}No response from ${c.bold}${config.commit.ai}${c.reset}${c.yellow}.${c.reset}`,
+      )
+    }
   }
 
   if (!message) {
     console.log(brief.text)
     console.error(
-      `\nNo commit message. Use the brief above to write one, then rerun with \`dokomade commit -m "<message>"\`.` +
+      `\n  ${c.yellow}${fig.warning}${c.reset}  ${c.bold}No commit message.${c.reset} Use the brief above to write one, then rerun with:\n` +
+        `     ${c.cyan}dokomade commit -m "<message>"${c.reset}` +
         (config.commit.ai === "none" && availableClis().length > 0
-          ? `\nOr set commit.ai in .dokomade/config.json to one of ${availableClis().join(" | ")} to generate it automatically.`
-          : ""),
+          ? `\n\n  ${c.dim}Tip: Set commit.ai in .dokomade/config.json to one of ${c.reset}${c.bold}${availableClis().join(" | ")}${c.reset}${c.dim} to generate automatically.${c.reset}`
+          : "") +
+        "\n",
     )
     process.exitCode = 1
     return false
   }
 
   if (process.stdin.isTTY && process.stdout.isTTY && !opts.yes) {
-    console.log(`\n${staged.length} files, ${brief.stageRows} log rows\n`)
-    console.log(message.replace(/^/gm, "  "))
-    if (!(await confirm("\nDo you want to commit this?"))) {
-      console.error("Cancelled. exiting without committing.")
+    renderCommitPreview(message, {
+      stagedCount: staged.length,
+      stageRows: brief.stageRows,
+      branch: currentBranch(root) || "-",
+      orphansCount: brief.orphans.length,
+    })
+    if (!(await confirm("Do you want to commit this?"))) {
+      console.error(`  ${c.yellow}${fig.cross}${c.reset}  ${c.dim}Cancelled. Exiting without committing.${c.reset}\n`)
       process.exitCode = 1
       return false
     }
@@ -331,7 +450,8 @@ export async function commit(opts: CommitOptions, cwd: string = process.cwd()): 
   // Step 3 + 4: the orphan row is written now so it is inside this commit.
   const touched = [...logFiles]
   if (brief.orphans.length > 0) {
-    const title = opts.orphanTitle?.trim() || `Manual changes (${brief.orphans.length + brief.noisyOrphans.length} files)`
+    const title =
+      opts.orphanTitle?.trim() || `Manual changes (${brief.orphans.length + brief.noisyOrphans.length} files)`
     touched.push(writeOrphanRow(root, config, brief.orphans, title))
   }
   const rel = [...new Set(touched)].map((f) => path.relative(root, f))
@@ -383,6 +503,11 @@ export async function push(opts: CommitOptions, cwd: string = process.cwd()): Pr
 
   const branch = currentBranch(root)
   const args = hasUpstream(root) ? ["push"] : branch ? ["push", "-u", "origin", branch] : ["push"]
+  if (process.stdout.isTTY) {
+    console.log(
+      `\n  ${c.cyan}${fig.step}${c.reset}  ${c.dim}Pushing to remote (${c.reset}${c.cyan}${branch || "origin"}${c.reset}${c.dim})...${c.reset}`,
+    )
+  }
   if (!gitPassthrough(root, args)) {
     fail("git push failed. Log status left unchanged.")
     return
