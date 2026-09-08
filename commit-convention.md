@@ -31,14 +31,6 @@ fix(api): handle null response from payment gateway
 docs(readme): update installation steps
 ```
 
-## Breaking Change
-
-```
-footer에 아래 추가:
-
-BREAKING CHANGE: remove deprecated `getUser()` method
-```
-
 ## 규칙
 
 - subject는 소문자 시작, 마침표 없음, 명령형 동사

@@ -96,7 +96,6 @@ async function run(): Promise<void> {
 
     const labels = classifyAll(relPaths, config.classify);
     const summary = await new MechanicalSummarizer().summarize({
-      promptText: state.lastPromptText ?? "",
       labels,
       files,
       lastAssistantMessage: event.lastAssistantMessage,

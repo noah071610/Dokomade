@@ -18,7 +18,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline/promises";
+import { selectAiCli } from "./init.js";
 import { OPEN_MARK, CLOSE_MARK, availableClis, runAi } from "../core/ai.js";
+import { report } from "../core/banner.js";
 import {
   authorName,
   currentBranch,
@@ -45,6 +47,7 @@ import {
   paths,
   readConfig,
   readJSONL,
+  writeJSON,
   type Config,
   type Paths,
   type QueueEntry,
@@ -62,6 +65,11 @@ export interface CommitOptions {
 
 /** Diff lines from orphan files that the brief may carry. */
 const ORPHAN_DIFF_LINES = 400;
+
+// ponytail: cap model context at 40 rows/paths; raise only if commit quality
+// measurably suffers from omitted older context.
+const MAX_BRIEF_LOG_ROWS = 40;
+const MAX_BRIEF_PATHS = 40;
 
 /**
  * Generated files, lockfiles and binaries.
@@ -118,6 +126,12 @@ function loggedPaths(p: Paths): Set<string> {
   return out;
 }
 
+function briefPaths(files: string[]): string {
+  const shown = files.slice(0, MAX_BRIEF_PATHS).map((file) => `- ${file}`);
+  if (files.length > MAX_BRIEF_PATHS) shown.push(`- ... ${files.length - MAX_BRIEF_PATHS}개 생략`);
+  return shown.join("\n");
+}
+
 interface Brief {
   text: string;
   stageRows: number;
@@ -134,6 +148,7 @@ function buildBrief(
   forAssistant: boolean,
 ): Brief {
   const rows = rowsWithStatus(logFiles, "stage");
+  const briefRows = rows.slice(-MAX_BRIEF_LOG_ROWS);
 
   // With rows but no ledger, every path looks unlogged - and the queue is
   // gitignored, so a fresh clone, a cleaned checkout, or a hook that never ran
@@ -153,8 +168,11 @@ function buildBrief(
     conventionText(root, config),
     "",
     "## 이번 커밋에 포함된 작업 로그",
-    rows.length > 0
-      ? rows.map((r) => `- ${r.time} ${r.summary}`).join("\n")
+    briefRows.length > 0
+      ? [
+          briefRows.map((r) => `- ${r.time} ${r.summary}`).join("\n"),
+          ...(rows.length > MAX_BRIEF_LOG_ROWS ? [`- ... ${rows.length - MAX_BRIEF_LOG_ROWS}개 이전 로그 생략`] : []),
+        ].join("\n")
       : "(로그 행 없음)",
   ];
 
@@ -162,15 +180,15 @@ function buildBrief(
     parts.push(
       "",
       "## 로그에 없는 변경",
-      orphans.map((f) => `- ${f}`).join("\n"),
+      briefPaths(orphans),
     );
     if (config.commit.analyzeOrphans) {
-      const diff = stagedDiff(root, orphans, ORPHAN_DIFF_LINES);
+      const diff = stagedDiff(root, orphans.slice(0, MAX_BRIEF_PATHS), ORPHAN_DIFF_LINES);
       if (diff) parts.push("", "```diff", diff, "```");
     }
   }
   if (noisyOrphans.length > 0) {
-    parts.push("", `## 생성물 (${noisyOrphans.length}개, 내용 생략)`, noisyOrphans.map((f) => `- ${f}`).join("\n"));
+    parts.push("", `## 생성물 (${noisyOrphans.length}개, 내용 생략)`, briefPaths(noisyOrphans));
   }
 
   parts.push(
@@ -270,7 +288,16 @@ export async function commit(opts: CommitOptions, cwd: string = process.cwd()): 
   }
 
   // Path A. Only reached from a bare terminal: an assistant would have passed
-  // -m already, having read `--context`.
+  // -m already, having read `--context`. Ask only when this path is actually
+  // needed, then persist the answer so later commit/push calls stay silent.
+  if (!message && opts.ai !== false) {
+    if (!config.commit.aiConfigured) {
+      config.commit.ai = await selectAiCli();
+      config.commit.aiConfigured = true;
+      writeJSON(p.config, config);
+      gitPassthrough(root, ["add", "--", path.relative(root, p.config)]);
+    }
+  }
   if (!message && opts.ai !== false && config.commit.ai !== "none") {
     console.error(`${config.commit.ai}에 커밋 메시지 요청 중… (본인 토큰 사용)`);
     message = runAi(config.commit.ai, brief.text, root) ?? undefined;
@@ -312,12 +339,18 @@ export async function commit(opts: CommitOptions, cwd: string = process.cwd()): 
 
   if (!gitPassthrough(root, ["commit", "-F", "-"], `${message}\n`)) return fail("git commit failed.");
 
-  // Step 6. Everything the window still calls `stage` is now committed.
-  const moved = setStatus([...new Set(touched)], "stage", "commit");
+  // Step 6. Everything the window still calls `stage` is now committed. Read
+  // the rows before flipping them: afterwards they are no longer `stage`.
+  const files = [...new Set(touched)];
+  const rows = rowsWithStatus(files, "stage");
+  setStatus(files, "stage", "commit");
   fs.rmSync(p.queue, { force: true });
 
-  const rows = moved.reduce((n, m) => n + m.rows, 0);
-  console.log(`committed. 로그 ${rows}행 stage → commit`);
+  report({
+    verb: "commit",
+    meta: [`${dateKey(new Date())} ${timeKey(new Date())}`, currentBranch(root) || "-", `${staged.length}개 파일`],
+    rows,
+  });
   return true;
 }
 
@@ -360,11 +393,14 @@ export async function push(opts: CommitOptions, cwd: string = process.cwd()): Pr
   }
 
   const logFiles = recentLogFiles(root, config.logDir, authorName(root), config.commit.windowDays);
-  const moved = setStatus(logFiles, "commit", "push");
-  const rows = moved.reduce((n, m) => n + m.rows, 0);
-  console.log(`pushed. 로그 ${rows}행 commit → push`);
-  if (rows > 0) {
+  const rows = rowsWithStatus(logFiles, "commit");
+  setStatus(logFiles, "commit", "push");
+
+  report({
+    verb: "push",
+    meta: [`${dateKey(new Date())} ${timeKey(new Date())}`, branch || "-", `${rows.length}행`],
+    rows,
     // Honest about step 6's cost rather than letting it look like a stray diff.
-    console.log(`${dateKey(new Date())} ${timeKey(new Date())} 기준 로그 파일이 수정됐다 - 다음 커밋에 포함된다.`);
-  }
+    notes: rows.length > 0 ? ["로그 파일이 수정됐다 - 다음 커밋에 포함된다."] : [],
+  });
 }

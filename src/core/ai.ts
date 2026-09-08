@@ -105,12 +105,18 @@ export function runAi(id: AiCliId, prompt: string, cwd: string): string | null {
       encoding: "utf8",
       timeout: 180_000,
       maxBuffer: 16 * 1024 * 1024,
-      stdio: [spec.stdin ? "pipe" : "ignore", "pipe", "ignore"],
+      stdio: [spec.stdin ? "pipe" : "ignore", "pipe", "pipe"],
       env: { ...process.env, [SKIP_ENV]: "1" },
     });
     const message = extractMessage(out);
     return message.length > 0 ? message : null;
-  } catch {
+  } catch (error) {
+    // Without this the caller can only say "no answer": a timeout, a logged-out
+    // CLI and a usage limit all look identical from here.
+    const e = error as { signal?: string | null; stderr?: string | Buffer };
+    const tail = String(e.stderr ?? "").trim().split("\n").slice(-3).join("\n");
+    if (e.signal) console.error(`${spec.bin} 종료됨 (${e.signal}, 180초 제한).`);
+    if (tail) console.error(tail);
     return null;
   }
 }

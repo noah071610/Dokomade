@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "commander": "15.0.0",
+    "dokomade": "file:dokomade-1.0.0.tgz",
     "zod": "4.5.4"
   },
   "type": "module",

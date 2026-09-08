@@ -7,7 +7,6 @@
 import type { FileChange } from "./markdown.js";
 
 export interface TurnContext {
-  promptText: string;
   labels: string[];
   files: FileChange[];
   lastAssistantMessage?: string;
@@ -31,11 +30,7 @@ const MAX_LEN = 40;
 export const TITLE_TAG = "[dokomade]";
 
 /** Instruction injected as a system reminder, invisible in the chat. */
-export const TITLE_REQUEST = [
-  `이 턴에서 파일을 수정했다면, 답변 맨 마지막 줄에 \`${TITLE_TAG} <제목>\` 형식으로 한 줄만 추가해라.`,
-  "제목은 방금 한 일을 한국어 20자 이내로 요약한 명사형. 예: `어휘카드 뒤로가기 추가`.",
-  "파일을 수정하지 않았으면 추가하지 마라. 그 줄 외에는 평소대로 답해라.",
-].join(" ");
+export const TITLE_REQUEST = `파일을 수정했다면 마지막 줄에 \`${TITLE_TAG} <한국어 명사형 제목(20자 이내)>\`를 추가하고, 아니면 추가하지 마라.`;
 
 // Matches the tag anywhere on its own line; the assistant sometimes explains
 // the convention before using it, so the last occurrence is the real one.
@@ -48,10 +43,9 @@ function taggedTitle(message: string): string | null {
 }
 
 /**
- * Editors and Claude Code splice context blocks into the prompt before the
- * user's own words - `<ide_opened_file>`, `<system-reminder>`, slash-command
- * wrappers. Taken literally they become the log title, which is how a row ends
- * up reading "<ide_opened_file>The user opened the fi…".
+ * Editors and Claude Code splice context blocks into text - `<ide_opened_file>`,
+ * `<system-reminder>`, slash-command wrappers - and the assistant quotes them
+ * back often enough that a title can inherit one.
  *
  * The closing tag may be missing when the block was truncated, so each pattern
  * also accepts end-of-string as its terminator.
@@ -59,20 +53,8 @@ function taggedTitle(message: string): string | null {
 const INJECTED_BLOCK =
   /<(ide_opened_file|ide_selection|ide_diagnostics|system-reminder|command-name|command-message|command-args|local-command-stdout|local-command-stderr)\b[^>]*>[\s\S]*?(?:<\/\1>|$)/gi;
 
-/**
- * Korean request endings that carry no information in a log row.
- *
- * Only the "하-" forms are stripped: "적용해줘" -> "적용" reads fine, but a bare
- * "줘" is part of the verb, and cutting it turns "붙여줘" into "붙여".
- */
-const TRAILING_REQUEST =
-  /\s*(?:좀\s*)?(?:해\s*(?:줘요?|주세요|주라|주실래요?|라|봐|줄래)|부탁\s*(?:해요?|드려요?|합니다)|주세요)\s*[.!?~]*$/;
-
 /** Declarative endings the assistant closes a report with: "...수정했습니다." */
 const TRAILING_DONE = /\s*(?:했|하였|되었|됐|완료했|추가했|수정했)(?:습니다|어요|음|다)\s*[.!?~]*$/;
-
-/** Filler the user opens with: "일단 이거 ...", "그리고 ...". */
-const LEADING_FILLER = /^(?:일단|그리고|근데|자|이제|아|음)\s+/;
 
 function clean(text: string): string {
   return text
@@ -82,37 +64,12 @@ function clean(text: string): string {
     .trim();
 }
 
-/**
- * A pasted JSON blob, error stack, or code fence is not the request - it is
- * material attached to it. "{"logDir": "docs...` truncated to 40 chars is a
- * useless title, and it also buries the sentence that follows ("이거 왜 안됨
- * 고쳐줘"). Detected by density of JSON/code punctuation, not by content.
- */
-const LOOKS_LIKE_DATA =
-  // Starts a block/array/tag/fence/keyword, is a `"key": value` JSON line, or
-  // ends the way JSON/code lines do (`,` `{` `}` `[` `]` `;`).
-  /^[{}[\]<]|^```|^\s*(?:const|function|import|export|class|def|SELECT)\b|^"[^"]*"\s*:|[,{}[\];]\s*$/;
-
-function isProseLine(line: string): boolean {
-  const trimmed = line.trim();
-  return trimmed.length > 0 && !LOOKS_LIKE_DATA.test(trimmed);
-}
-
 function condense(text: string): string {
-  const lines = clean(text)
+  const out = clean(text)
     .split(/\r?\n/)
     .map((l) => l.trim())
-    .filter((l) => l.length > 0);
-
-  // Prefer the first line that reads as an instruction. A prompt that is
-  // entirely pasted data (no prose line at all) falls back to the first line
-  // rather than producing an empty title.
-  const firstLine = lines.find(isProseLine) ?? lines[0] ?? "";
-
-  let out = firstLine;
-  // Users often stack two of these: "일단 그리고 ...".
-  for (let i = 0; i < 2; i++) out = out.replace(LEADING_FILLER, "");
-  out = out.replace(TRAILING_REQUEST, "").trim();
+    .find((l) => l.length > 0);
+  if (!out) return "";
   if (out.length <= MAX_LEN) return out;
   return `${out.slice(0, MAX_LEN - 1).trimEnd()}…`;
 }
@@ -133,24 +90,20 @@ function fromAssistant(message: string): string {
  *
  *   1. the `[dokomade] ...` line the assistant tagged its own reply with -
  *      it knows what it actually did, not just what was asked
- *   2. the user's prompt, in their words
- *   3. the assistant's closing sentence
- *   4. path-derived labels
+ *   2. the assistant's closing sentence, which still describes the work
+ *   3. path-derived labels
  *
- * Every step degrades quietly: if the assistant never tagged a line, the row
- * still gets the title it would have had before.
+ * The prompt is deliberately not in this list. It is the request, not the
+ * work: it carries throwaway wording ("이거 왜 이럼"), pasted data, and IDE
+ * context blocks, and it says nothing about what the turn actually changed -
+ * which is the one thing the row exists to record.
  */
 export class MechanicalSummarizer implements Summarizer {
   async summarize(input: TurnContext): Promise<string> {
     if (input.lastAssistantMessage) {
       const tagged = taggedTitle(input.lastAssistantMessage);
       if (tagged) return condense(tagged) || tagged.slice(0, MAX_LEN);
-    }
 
-    const fromPrompt = condense(input.promptText);
-    if (fromPrompt) return fromPrompt;
-
-    if (input.lastAssistantMessage) {
       const said = fromAssistant(input.lastAssistantMessage);
       if (said) return said;
     }

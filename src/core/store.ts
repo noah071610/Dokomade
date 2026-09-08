@@ -24,8 +24,21 @@ export const STATE_DIR = ".dokomade";
  */
 export const SKIP_ENV = "DOKOMADE_SKIP";
 
+/**
+ * Headless runs of the same CLIs, which are never the user's work session.
+ *
+ * `claude -p` sets CLAUDE_CODE_ENTRYPOINT=sdk-cli. Its prompt is a throwaway
+ * string - a commit-message brief, a script, a CI step - and the working tree
+ * it sees belongs to whoever spawned it, so a row from there gets a nonsense
+ * title over somebody else's files. Only set when nothing set it already: a
+ * `claude -p` spawned from inside another session inherits that parent's
+ * entrypoint and is not caught here.
+ */
+const HEADLESS_ENTRYPOINTS = new Set(["sdk-cli"]);
+
 export function shouldSkip(): boolean {
-  return process.env[SKIP_ENV] === "1";
+  if (process.env[SKIP_ENV] === "1") return true;
+  return HEADLESS_ENTRYPOINTS.has(process.env.CLAUDE_CODE_ENTRYPOINT ?? "");
 }
 
 
@@ -78,7 +91,7 @@ export interface ClassifyConfig {
   backend: { routeDirs: string[] };
 }
 
-export type ProjectType = "frontend" | "backend" | "fullstack";
+export type ProjectType = "frontend" | "backend" | "fullstack" | "library";
 
 /**
  * Which of the user's own AI CLIs `dokomade commit` may shell out to when it
@@ -95,6 +108,8 @@ export interface CommitConfig {
   convention: string;
   /** CLI used for the terminal fallback. */
   ai: AiCliId;
+  /** Whether the user has chosen the terminal fallback yet. */
+  aiConfigured: boolean;
   /**
    * Spend tokens describing files that changed without a log row. Off by
    * default: after the noise filter, what is left is usually nothing, and a
@@ -115,6 +130,7 @@ export const DEFAULT_COMMIT: CommitConfig = {
   windowDays: 7,
   convention: "commit-convention.md",
   ai: "none",
+  aiConfigured: false,
   analyzeOrphans: false,
 };
 
@@ -244,10 +260,15 @@ export function readState(p: Paths): State {
 
 export function readConfig(p: Paths): Config {
   const raw = readJSON<Partial<Config>>(p.config, {});
+  const aiConfigured =
+    typeof raw.commit?.aiConfigured === "boolean" ? raw.commit.aiConfigured : raw.commit?.ai !== undefined;
   return {
     logDir: raw.logDir ?? DEFAULT_CONFIG.logDir,
     projectType:
-      raw.projectType === "frontend" || raw.projectType === "backend" || raw.projectType === "fullstack"
+      raw.projectType === "frontend" ||
+      raw.projectType === "backend" ||
+      raw.projectType === "fullstack" ||
+      raw.projectType === "library"
         ? raw.projectType
         : DEFAULT_CONFIG.projectType,
     classify: {
@@ -257,6 +278,7 @@ export function readConfig(p: Paths): Config {
     commit: {
       ...DEFAULT_COMMIT,
       ...raw.commit,
+      aiConfigured,
       // A window of 0 would make `commit` find nothing and report "no staged
       // rows" on a repo full of them.
       windowDays: Math.max(1, Number(raw.commit?.windowDays) || DEFAULT_COMMIT.windowDays),

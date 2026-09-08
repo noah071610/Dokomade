@@ -22,7 +22,7 @@ import {
 } from "./markdown.js";
 import { retitle } from "../commands/retitle.js";
 import { MechanicalSummarizer } from "./summarize.js";
-import { DEFAULT_CONFIG, findRoot } from "./store.js";
+import { DEFAULT_CONFIG, findRoot, paths, readConfig, writeJSON } from "./store.js";
 import { CLOSE_MARK, OPEN_MARK, extractMessage } from "./ai.js";
 
 const cfg = DEFAULT_CONFIG.classify;
@@ -68,6 +68,16 @@ describe("classify", () => {
   });
 });
 
+describe("config", () => {
+  it("accepts library and extension projects", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "dkmd-config-"));
+    fs.mkdirSync(path.join(root, ".dokomade"));
+    writeJSON(paths(root).config, { projectType: "library" });
+
+    expect(readConfig(paths(root)).projectType).toBe("library");
+  });
+});
+
 describe("markdown", () => {
   it("renders the file cell as basename +add/-del joined by <br>", () => {
     expect(
@@ -105,57 +115,9 @@ describe("markdown", () => {
 describe("MechanicalSummarizer", () => {
   const s = new MechanicalSummarizer();
 
-  it("drops the polite request ending", async () => {
-    expect(
-      await s.summarize({ promptText: "tailwindcss 적용해줘", labels: ["src"], files: [] }),
-    ).toBe("tailwindcss 적용");
-  });
-
-  it("strips IDE context blocks spliced into the prompt", async () => {
-    const polluted =
-      "<ide_opened_file>The user opened the file /x/vite.config.ts in the IDE. This may or may not be related.</ide_opened_file>어휘카드 뒤로가기 추가해줘";
-    expect(
-      await s.summarize({ promptText: polluted, labels: ["vite.config", "index"], files: [] }),
-    ).toBe("어휘카드 뒤로가기 추가");
-  });
-
-  it("survives a truncated context block with no closing tag", async () => {
+  it("takes the line the assistant tagged", async () => {
     expect(
       await s.summarize({
-        promptText: "다크모드 붙여줘\n<system-reminder>As you answer the user",
-        labels: [],
-        files: [],
-      }),
-    ).toBe("다크모드 붙여줘");
-  });
-
-  it("never prefixes path labels onto a usable prompt", async () => {
-    expect(
-      await s.summarize({ promptText: "버튼 색 바꿔", labels: ["calculator"], files: [] }),
-    ).toBe("버튼 색 바꿔");
-  });
-
-  it("drops leading filler", async () => {
-    expect(
-      await s.summarize({ promptText: "일단 이거 로그인 폼 검증 추가", labels: [], files: [] }),
-    ).toBe("이거 로그인 폼 검증 추가");
-  });
-
-  it("falls back to what the assistant said when the prompt is all context", async () => {
-    expect(
-      await s.summarize({
-        promptText: "<ide_opened_file>The user opened a file</ide_opened_file>",
-        labels: ["auth"],
-        files: [],
-        lastAssistantMessage: "**로그인 리다이렉트 수정**했습니다. `auth.ts`를 고쳤어요.",
-      }),
-    ).toBe("로그인 리다이렉트 수정");
-  });
-
-  it("prefers the line the assistant tagged over the raw prompt", async () => {
-    expect(
-      await s.summarize({
-        promptText: "이거 좀 봐줘 뭔가 이상한데",
         labels: ["vocab"],
         files: [],
         lastAssistantMessage: "원인 찾았습니다.\n\n[dokomade] 어휘카드 뒤로가기 수정",
@@ -166,7 +128,6 @@ describe("MechanicalSummarizer", () => {
   it("takes the last tag when the assistant also explains the convention", async () => {
     expect(
       await s.summarize({
-        promptText: "",
         labels: [],
         files: [],
         lastAssistantMessage: "형식은 `[dokomade] <제목>` 입니다.\n- [dokomade] 로그인 폼 검증 추가",
@@ -174,29 +135,45 @@ describe("MechanicalSummarizer", () => {
     ).toBe("로그인 폼 검증 추가");
   });
 
-  it("keeps the prompt title when the assistant never tagged a line", async () => {
+  it("falls back to what the assistant said, stripped of markdown", async () => {
     expect(
       await s.summarize({
-        promptText: "tailwindcss 적용해줘",
-        labels: [],
+        labels: ["auth"],
         files: [],
-        lastAssistantMessage: "적용했습니다.",
+        lastAssistantMessage: "**로그인 리다이렉트 수정**했습니다. `auth.ts`를 고쳤어요.",
       }),
-    ).toBe("tailwindcss 적용");
+    ).toBe("로그인 리다이렉트 수정");
   });
 
-  it("keeps pasted JSON out of the title and finds the request line", async () => {
+  it("strips IDE context blocks the assistant quoted back", async () => {
     expect(
       await s.summarize({
-        promptText: '{\n  "logDir": "docs/dokomade",\n  "pageDirs": ["src/"]\n}\n이거 왜 안됨 고쳐줘',
-        labels: [],
+        labels: ["vite.config"],
         files: [],
+        lastAssistantMessage:
+          "<ide_opened_file>The user opened the file /x/vite.config.ts in the IDE.</ide_opened_file>\n[dokomade] 어휘카드 뒤로가기 추가",
       }),
-    ).toBe("이거 왜 안됨 고쳐줘");
+    ).toBe("어휘카드 뒤로가기 추가");
+  });
+
+  it("never titles a row from the prompt", async () => {
+    // The request is not the work: an untagged turn falls through to labels
+    // rather than echoing whatever the user typed.
+    expect(
+      await s.summarize({
+        labels: ["users"],
+        files: [],
+        lastAssistantMessage: "<ide_opened_file>The user opened a file</ide_opened_file>",
+      }),
+    ).toBe("users");
   });
 
   it("falls back to labels when there is nothing else", async () => {
-    expect(await s.summarize({ promptText: "", labels: ["users"], files: [] })).toBe("users");
+    expect(await s.summarize({ labels: ["users"], files: [] })).toBe("users");
+  });
+
+  it("has a title even with no labels", async () => {
+    expect(await s.summarize({ labels: [], files: [] })).toBe("파일 수정");
   });
 });
 

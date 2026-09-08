@@ -1,16 +1,21 @@
 {
   "logDir": "docs/dokomade",
-  "projectType": "frontend",
+  "projectType": "library",
   "classify": {
     "frontend": {
-      "pageDirs": [
-        "."
-      ],
+      "pageDirs": [],
       "sharedDirs": []
     },
     "backend": {
       "routeDirs": []
     }
+  },
+  "commit": {
+    "windowDays": 7,
+    "convention": "commit-convention.md",
+    "ai": "claude",
+    "aiConfigured": true,
+    "analyzeOrphans": false
   },
   "integrations": {
     "notion": false,
