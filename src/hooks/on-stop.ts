@@ -13,7 +13,14 @@ import { classifyAll } from "../core/classify.js";
 import { codex } from "../adapters/codex.js";
 import { cursor } from "../adapters/cursor.js";
 import { authorName, changedSince, lineDeltas } from "../core/git.js";
-import { appendRow, dateKey, logPath, timeKey, type FileChange } from "../core/markdown.js";
+import {
+  appendRow,
+  dateKey,
+  logPath,
+  timeKey,
+  type AgentName,
+  type FileChange,
+} from "../core/markdown.js";
 import { MechanicalSummarizer } from "../core/summarize.js";
 import {
   STATE_DIR,
@@ -45,9 +52,14 @@ let cursorReply: string | null = null;
 async function run(): Promise<void> {
   const raw = readPayload();
   const cursorEvent = cursor.parse(raw);
-  const event = cursorEvent ?? codex.parse(raw) ?? claudeCode.parse(raw);
+  const codexEvent = cursorEvent ? null : codex.parse(raw);
+  const event = cursorEvent ?? codexEvent ?? claudeCode.parse(raw);
   if (cursorEvent) cursorReply = "{}";
   if (event?.kind !== "stop") return;
+
+  // Which adapter recognised the payload is the only honest answer to "which
+  // agent wrote this row": the tools do not identify themselves in the body.
+  const agent: AgentName = cursorEvent ? "cursor" : codexEvent ? "codex" : "claude";
 
   const root = findRoot(event.cwd);
   if (!root) return;
@@ -71,7 +83,7 @@ async function run(): Promise<void> {
     // one, so it is skipped rather than sweeping in the whole working tree.
     //
     // The log directory is excluded for the same reason .dokomade/ is: writing
-    // a row, or `commit` flipping a 상태 cell, changes a file inside the turn's
+    // a row, or `commit` flipping a Status cell, changes a file inside the turn's
     // window - and `changedSince` would then file a row about dokomade
     // bookkeeping, whose own row would be bookkeeping in turn.
     const logDirPrefix = `${config.logDir.replace(/\/+$/, "")}/`;
@@ -108,6 +120,7 @@ async function run(): Promise<void> {
       summary,
       files,
       durationMs: state.promptStartedAt ? at.getTime() - state.promptStartedAt : -1,
+      agent,
       author,
       status: "stage",
     });

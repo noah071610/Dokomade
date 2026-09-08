@@ -195,11 +195,11 @@ async function selectPrompt<T>(options: SelectPromptOptions<T>): Promise<number[
     let done = false
     let buffer = ""
 
-    const linesCount = items.length
-
     const render = (): void => {
       if (rendered) {
-        process.stdout.write(`\x1b[${linesCount}A`)
+        process.stdout.write("\x1b[u\x1b[J")
+      } else {
+        process.stdout.write("\x1b[s")
       }
 
       const lines = items.map((item, i) => {
@@ -249,7 +249,7 @@ async function selectPrompt<T>(options: SelectPromptOptions<T>): Promise<number[
       }
       cleanup()
       if (rendered) {
-        process.stdout.write(`\x1b[${linesCount + 1}A\x1b[0J`)
+        process.stdout.write("\x1b[u\x1b[1A\x1b[0J")
       }
       const selectedIndices = multi ? [...checked] : [cursor]
       const selectedText =

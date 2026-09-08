@@ -118,11 +118,11 @@ describe("markdown", () => {
       durationMs: 4 * 60_000,
       author: "noah",
     });
-    expect(row).toBe("| 14:11 | a \\| b | `x.ts` +1/-0 | 4m | noah | stage |");
-    // Cell delimiters are the unescaped pipes: 6 columns -> 7 delimiters.
-    expect(row.replace(/\\\|/g, "").split("|").length - 1).toBe(7);
-    // An escaped pipe must not shift 상태 into the 작성자 slot.
-    expect(splitCells(row)).toHaveLength(6);
+    expect(row).toBe("| 14:11 | a \\| b | `x.ts` +1/-0 | 4m | - | noah | stage |");
+    // Cell delimiters are the unescaped pipes: 7 columns -> 8 delimiters.
+    expect(row.replace(/\\\|/g, "").split("|").length - 1).toBe(8);
+    // An escaped pipe must not shift Status into the Author slot.
+    expect(splitCells(row)).toHaveLength(7);
     expect(statusOf(row)).toBe("stage");
   });
 });
@@ -296,15 +296,19 @@ describe("status column", () => {
   });
 
   it("ignores a status cell holding something that is not a status", () => {
-    expect(statusOf("| 14:00 | a | - | - | noah | 아무말 |")).toBe("stage");
+    expect(statusOf("| 14:00 | a | - | - | claude | noah | 아무말 |")).toBe("stage");
   });
 
-  it("appends the cell to a legacy row rather than overwriting 작성자", () => {
+  it("reads a legacy row's status from where that row actually keeps it", () => {
+    expect(statusOf("| 14:00 | a | - | 2m | noah | push |")).toBe("push");
+  });
+
+  it("opens the AI gap on a legacy row rather than overwriting Author", () => {
     const row = withStatus("| 14:00 | a | - | 2m | noah |", "commit");
-    expect(splitCells(row)).toEqual(["14:00", "a", "-", "2m", "noah", "commit"]);
+    expect(splitCells(row)).toEqual(["14:00", "a", "-", "2m", "-", "noah", "commit"]);
   });
 
-  it("widens a header a formatter has already padded", () => {
+  it("replaces an outdated header and widens the rows under it", () => {
     const root = tmp();
     const file = path.join(root, "2026-09-07.md");
     fs.writeFileSync(
@@ -312,7 +316,7 @@ describe("status column", () => {
       [
         "# 2026-09-07 — noah",
         "",
-        "| 시각  | 작업 | 파일 | 소요 | 작성자 |",
+        "| 시각  | 안녕바보야 | 파일 | 소요 | 작성자 |",
         "| ----- | ---- | ---- | ---- | ------ |",
         "| 14:00 | a    | -    | 2m   | noah   |",
         "",
@@ -320,10 +324,19 @@ describe("status column", () => {
     );
     upgradeHeader(file);
     const lines = fs.readFileSync(file, "utf8").split("\n");
-    expect(splitCells(lines[2] as string)).toHaveLength(6);
-    expect(splitCells(lines[3] as string)).toHaveLength(6);
-    // Rewriting the header must not disturb the rows under it.
-    expect(lines[4]).toBe("| 14:00 | a    | -    | 2m   | noah   |");
+    expect(splitCells(lines[3] as string)).toHaveLength(7);
+    // A header is labels, not data: an old or hand-renamed one is replaced.
+    expect(splitCells(lines[2] as string)).toEqual([
+      "Time",
+      "Task",
+      "Files",
+      "Duration",
+      "AI",
+      "Author",
+      "Status",
+    ]);
+    // The row is data, so it is only widened: noah stays in Author.
+    expect(splitCells(lines[4] as string)).toEqual(["14:00", "a", "-", "2m", "-", "noah", ""]);
   });
 
   it("moves only the rows in the requested state, and reports the count", () => {

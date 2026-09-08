@@ -1,5 +1,5 @@
 /** git plumbing: per-file line deltas and the author name. Builtins only. */
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -133,25 +133,36 @@ export function authorName(root: string): string {
 }
 
 /**
- * Run git with its stdout and stderr attached to the terminal, and report only
- * whether it succeeded.
+ * Run git, replay its stdout/stderr to the terminal, and retain the output so
+ * a failed command can be explained instead of ending at a generic message.
  *
  * The read-only helpers above swallow stderr on purpose - a failed
  * `git config user.name` is not news. A failed `git push` is: the reject
  * message ("non-fast-forward", "no upstream branch") is the whole answer, and
  * hiding it would leave the user with a bare "push failed".
  */
-export function gitPassthrough(root: string, args: string[], stdin?: string): boolean {
-  try {
-    execFileSync("git", ["-C", root, ...args], {
-      input: stdin,
-      stdio: [stdin === undefined ? "ignore" : "pipe", "inherit", "inherit"],
-      timeout: 120_000,
-    });
-    return true;
-  } catch {
-    return false;
-  }
+export interface GitResult {
+  ok: boolean;
+  output: string;
+}
+
+export function gitPassthrough(root: string, args: string[], stdin?: string): GitResult {
+  const result = spawnSync("git", ["-C", root, ...args], {
+    cwd: root,
+    input: stdin,
+    encoding: "utf8",
+    stdio: [stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+    timeout: 120_000,
+    maxBuffer: 8 * 1024 * 1024,
+  });
+  const processError = result.error?.message ?? (result.signal ? `git 종료됨 (${result.signal})` : undefined);
+  const output = [result.stdout, result.stderr, processError]
+    .filter((part): part is string => typeof part === "string" && part.length > 0)
+    .join("");
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  if (processError && !result.stderr) process.stderr.write(`${processError}\n`);
+  return { ok: result.status === 0, output };
 }
 
 /** Repo-relative paths currently in the index, as `git commit` would take them. */
