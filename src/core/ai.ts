@@ -14,7 +14,7 @@
  *
  * This file is only path A.
  */
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { SKIP_ENV, type AiCliId } from "./store.js";
@@ -92,31 +92,38 @@ export function extractMessage(raw: string): string {
  * the user's tokens and getting garbage should cost them a retry, not a
  * mangled commit.
  */
-export function runAi(id: AiCliId, prompt: string, cwd: string): string | null {
-  if (id === "none") return null;
+export function runAi(id: AiCliId, prompt: string, cwd: string): Promise<string | null> {
+  if (id === "none") return Promise.resolve(null);
   const spec = CLIS.find((c) => c.id === id);
-  if (!spec || !onPath(spec.bin)) return null;
+  if (!spec || !onPath(spec.bin)) return Promise.resolve(null);
 
   const args = spec.stdin ? spec.args : (spec.argvPrompt as (p: string) => string[])(prompt);
-  try {
-    const out = execFileSync(spec.bin, args, {
-      cwd,
-      input: spec.stdin ? prompt : undefined,
-      encoding: "utf8",
-      timeout: 180_000,
-      maxBuffer: 16 * 1024 * 1024,
-      stdio: [spec.stdin ? "pipe" : "ignore", "pipe", "pipe"],
-      env: { ...process.env, [SKIP_ENV]: "1" },
-    });
-    const message = extractMessage(out);
-    return message.length > 0 ? message : null;
-  } catch (error) {
-    // Without this the caller can only say "no answer": a timeout, a logged-out
-    // CLI and a usage limit all look identical from here.
-    const e = error as { signal?: string | null; stderr?: string | Buffer };
-    const tail = String(e.stderr ?? "").trim().split("\n").slice(-3).join("\n");
-    if (e.signal) console.error(`${spec.bin} 종료됨 (${e.signal}, 180초 제한).`);
-    if (tail) console.error(tail);
-    return null;
-  }
+  return new Promise((resolve) => {
+    const child = execFile(
+      spec.bin,
+      args,
+      {
+        cwd,
+        encoding: "utf8",
+        timeout: 180_000,
+        maxBuffer: 16 * 1024 * 1024,
+        env: { ...process.env, [SKIP_ENV]: "1" },
+      },
+      (error, stdout, stderr) => {
+        if (!error) {
+          const message = extractMessage(stdout);
+          resolve(message.length > 0 ? message : null);
+          return;
+        }
+        // Without this the caller can only say "no answer": a timeout, a logged-out
+        // CLI and a usage limit all look identical from here.
+        const e = error as { signal?: string | null };
+        const tail = String(stderr ?? "").trim().split("\n").slice(-3).join("\n");
+        if (e.signal) console.error(`${spec.bin} 종료됨 (${e.signal}, 180초 제한).`);
+        if (tail) console.error(tail);
+        resolve(null);
+      },
+    );
+    child.stdin?.end(spec.stdin ? prompt : undefined);
+  });
 }

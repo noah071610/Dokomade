@@ -56,6 +56,7 @@ export interface State {
   promptStartedAt?: number;
   lastPromptText?: string;
   sessionId?: string;
+  agent?: "claude" | "codex" | "cursor";
   transcriptOffset?: number;
 }
 
@@ -402,3 +403,5 @@ export function recordPerf(p: Paths, hook: string, startedAt: number): void {
     // Perf logging must never break a hook.
   }
 }
+
+// [dokomade] Codex 작성자 상태 추가

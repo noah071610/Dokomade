@@ -21,8 +21,10 @@ import { codex } from "../adapters/codex.js";
 import { claudeCode } from "../adapters/claude-code.js";
 import { cursor } from "../adapters/cursor.js";
 import { TITLE_REQUEST } from "../core/summarize.js";
-import { findRoot, paths, readState, recordPerf, shouldSkip, writeJSON } from "../core/store.js";
+import { findRoot, paths, readState, recordPerf, shouldSkip, writeJSON, type State } from "../core/store.js";
+import type { AgentName } from "../core/markdown.js";
 import { readPayload } from "./io.js";
+import { recordTurn } from "./record-turn.js";
 
 const startedAt = Date.now();
 
@@ -39,17 +41,34 @@ let cursorReply: string | null = null;
 try {
   const raw = readPayload();
   const cursorEvent = cursor.parse(raw);
-  const event = cursorEvent ?? codex.parse(raw) ?? claudeCode.parse(raw);
+  const codexEvent = cursorEvent ? null : codex.parse(raw);
+  const event = cursorEvent ?? codexEvent ?? claudeCode.parse(raw);
   if (event?.kind === "prompt") {
     if (cursorEvent) cursorReply = JSON.stringify({ continue: true });
     const root = findRoot(event.cwd);
     if (root) {
       const p = paths(root);
+      const previous: State = readState(p);
+      if (previous.promptStartedAt) {
+        try {
+          await recordTurn(
+            root,
+            (previous.agent as AgentName | undefined) ??
+              (cursorEvent ? "cursor" : codexEvent ? "codex" : "claude"),
+            undefined,
+            "on-prompt-recovery",
+            startedAt,
+          );
+        } catch {
+          // Recovery must never swallow the prompt that follows it.
+        }
+      }
       writeJSON(p.state, {
-        ...readState(p),
+        ...previous,
         promptStartedAt: startedAt,
         lastPromptText: event.promptText,
         sessionId: event.sessionId,
+        agent: cursorEvent ? "cursor" : codexEvent ? "codex" : "claude",
       });
       if (!cursorEvent) {
         process.stdout.write(
@@ -71,3 +90,5 @@ try {
 if (cursorReply) process.stdout.write(cursorReply);
 
 process.exit(0);
+
+// [dokomade] 누락 턴 회수 기록

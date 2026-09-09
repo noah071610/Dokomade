@@ -358,7 +358,7 @@ export async function selectAiCli(): Promise<AiCliId> {
 }
 
 async function selectIntegrations(): Promise<Set<IntegrationId>> {
-  if (!(await confirmPrompt("Connect API integrations now?", false))) return new Set()
+  if (await confirmPrompt("Skip API integrations?", true)) return new Set()
 
   const choices: SelectItem<IntegrationChoice>[] = [
     ...INTEGRATIONS,
@@ -687,3 +687,5 @@ export async function init(cwd: string = process.cwd()): Promise<void> {
     `  ${c.gray}Until then Codex skips every dokomade hook without an error. \`codex exec\` cannot approve them.${c.reset}\n`,
   )
 }
+
+// [dokomade] API 연동 기본값 변경

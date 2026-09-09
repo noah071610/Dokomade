@@ -285,6 +285,27 @@ const fig = {
   warning: isUnicode ? "▲" : "!",
 }
 
+async function withSpinner<T>(label: string, work: () => Promise<T>): Promise<T> {
+  if (!process.stderr.isTTY) {
+    console.error(`  ${c.cyan}${fig.step}${c.reset}  ${label}...`)
+    return work()
+  }
+
+  const frames = isUnicode ? ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] : ["-", "\\", "|", "/"]
+  let frame = 0
+  const draw = (): void => {
+    process.stderr.write(`\r  ${c.cyan}${frames[frame++ % frames.length]}${c.reset}  ${label}...`)
+  }
+  draw()
+  const timer = setInterval(draw, 80)
+  try {
+    return await work()
+  } finally {
+    clearInterval(timer)
+    process.stderr.write("\r\x1b[2K")
+  }
+}
+
 function formatSubject(subject: string): string {
   const match = subject.match(/^([a-z]+)(\([^)]+\))?(!?):\s*(.*)$/i)
   if (!match) return `${c.bold}${c.white}${subject}${c.reset}`
@@ -381,13 +402,13 @@ function failureTail(output: string): string {
   return output.trim().split(/\r?\n/).filter(Boolean).slice(-3).join(" ").replace(/\s+/g, " ").slice(0, 240)
 }
 
-function failureSummary(
+async function failureSummary(
   operation: string,
   output: string,
   config: Config,
   root: string,
   allowAi: boolean,
-): string {
+): Promise<string> {
   const raw = failureTail(output)
   if (allowAi && config.commit.ai !== "none") {
     const prompt = [
@@ -396,20 +417,21 @@ function failureSummary(
       `명령: ${operation}`,
       `<git-error>${raw || "원인 미상"}</git-error>`,
     ].join("\n")
-    const summary = runAi(config.commit.ai, prompt, root)?.split(/\r?\n/).map((line) => line.trim()).find(Boolean)
+    const summary = (await withSpinner(`Analyzing ${operation} failure`, () => runAi(config.commit.ai, prompt, root)))
+      ?.split(/\r?\n/).map((line) => line.trim()).find(Boolean)
     if (summary) return summary.slice(0, 240)
   }
   return raw || "원인 미상"
 }
 
-function failGit(
+async function failGit(
   operation: string,
   result: ReturnType<typeof gitPassthrough>,
   config: Config,
   root: string,
   allowAi: boolean,
-): false {
-  return fail(`${operation} 실패 원인: ${failureSummary(operation, result.output, config, root, allowAi)}`)
+): Promise<false> {
+  return fail(`${operation} 실패 원인: ${await failureSummary(operation, result.output, config, root, allowAi)}`)
 }
 
 /** Returns true when a commit was made. */
@@ -461,10 +483,10 @@ export async function commit(
     }
   }
   if (!message && opts.ai !== false && config.commit.ai !== "none") {
-    console.error(
-      `\n  ${c.cyan}${fig.step}${c.reset}  ${c.dim}Requesting commit message from${c.reset} ${c.cyan}${c.bold}${config.commit.ai}${c.reset}${c.dim}...${c.reset}`,
-    )
-    message = runAi(config.commit.ai, brief.text, root) ?? undefined
+    message = (await withSpinner(
+      `Requesting commit message from ${c.cyan}${c.bold}${config.commit.ai}${c.reset}`,
+      () => runAi(config.commit.ai, brief.text, root),
+    )) ?? undefined
     if (!message) {
       console.error(
         `  ${c.yellow}${fig.warning}${c.reset}  ${c.yellow}No response from ${c.bold}${config.commit.ai}${c.reset}${c.yellow}.${c.reset}`,
@@ -583,3 +605,5 @@ export async function push(opts: CommitOptions, cwd: string = process.cwd()): Pr
     notes: rows.length > 0 ? ["Log files were modified - they will be included in the next commit."] : [],
   })
 }
+
+// [dokomade] 로딩 문구 중복 제거

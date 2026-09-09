@@ -187,6 +187,26 @@ describe("MechanicalSummarizer", () => {
     expect(await s.summarize({ labels: ["users"], files: [] })).toBe("users");
   });
 
+  it("skips generic acknowledgements and uses the changed file", async () => {
+    expect(
+      await s.summarize({
+        labels: [],
+        files: [{ path: "src/auth/login.ts", added: 1, removed: 0 }],
+        lastAssistantMessage: "고쳤습니다.",
+      }),
+    ).toBe("login 변경");
+  });
+
+  it("rejects a generic tagged title too", async () => {
+    expect(
+      await s.summarize({
+        labels: [],
+        files: [{ path: "src/auth/login.ts", added: 1, removed: 0 }],
+        lastAssistantMessage: "[dokomade] 수정",
+      }),
+    ).toBe("login 변경");
+  });
+
   it("has a title even with no labels", async () => {
     expect(await s.summarize({ labels: [], files: [] })).toBe("파일 수정");
   });
@@ -410,3 +430,5 @@ describe("extractMessage", () => {
     expect(extractMessage("```\nfix(api): handle null\n```\n")).toBe("fix(api): handle null");
   });
 });
+
+// [dokomade] Codex 제목 추론 검증
