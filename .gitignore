@@ -2,11 +2,16 @@ node_modules
 Master.md
 
 # dokomade runtime state
+.claude
+.codex
+.cursor
 .dokomade/state.json
 .dokomade/pending.jsonl
 .dokomade/queue.jsonl
 .dokomade/perf.jsonl
 docs/*
+# dokomade logs are runtime bookkeeping.
+docs/dokomade
 
 *.tgz
 dist

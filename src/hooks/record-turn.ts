@@ -1,13 +1,8 @@
-import { classifyAll } from "../core/classify.js";
-import { authorName, changedSince, lineDeltas } from "../core/git.js";
-import {
-  appendRow,
-  dateKey,
-  logPath,
-  timeKey,
-  type AgentName,
-  type FileChange,
-} from "../core/markdown.js";
+import fs from "node:fs"
+import path from "node:path"
+import { classifyAll } from "../core/classify.js"
+import { authorName, changedSince, lineDeltas } from "../core/git.js"
+import { appendRow, dateKey, logPath, timeKey, type AgentName, type FileChange } from "../core/markdown.js"
 import {
   STATE_DIR,
   appendJSONL,
@@ -16,10 +11,10 @@ import {
   readConfig,
   readState,
   recordPerf,
+  repoRelativePath,
   writeJSON,
-} from "../core/store.js";
-import { MechanicalSummarizer } from "../core/summarize.js";
-import fs from "node:fs";
+} from "../core/store.js"
+import { MechanicalSummarizer } from "../core/summarize.js"
 
 /** Record one turn; also used to recover a Stop hook that never ran. */
 export async function recordTurn(
@@ -29,61 +24,62 @@ export async function recordTurn(
   hook: string,
   startedAt: number,
 ): Promise<boolean> {
-  const p = paths(root);
-  const { entries, claimed } = claimPending(p);
+  const p = paths(root)
+  const { entries, claimed } = claimPending(p)
 
   try {
-    const config = readConfig(p);
-    const state = readState(p);
-    const logDirPrefix = `${config.logDir.replace(/\/+$/, "")}/`;
+    const config = readConfig(p)
+    const state = readState(p)
+    const logDirPrefix = `${config.logDir.replace(/\/+$/, "")}/`
+    const pendingPaths = entries.flatMap((entry) => {
+      if (typeof entry.path !== "string") return []
+      const relative = repoRelativePath(root, path.resolve(root, entry.path))
+      return relative ? [relative] : []
+    })
     const relPaths = [
       ...new Set(
-        [
-          ...entries.map((e) => e.path),
-          ...(state.promptStartedAt ? changedSince(root, state.promptStartedAt) : []),
-        ].filter(
+        [...pendingPaths, ...(state.promptStartedAt ? changedSince(root, state.promptStartedAt) : [])].filter(
           (rel) => rel && !rel.startsWith(`${STATE_DIR}/`) && !rel.startsWith(logDirPrefix),
         ),
       ),
-    ];
-    if (relPaths.length === 0) return false;
+    ]
+    if (relPaths.length === 0) return false
 
-    const deltas = lineDeltas(root, relPaths);
+    const deltas = lineDeltas(root, relPaths)
     const files: FileChange[] = relPaths.map((rel) => ({
       path: rel,
       added: deltas.get(rel)?.added ?? 0,
       removed: deltas.get(rel)?.removed ?? 0,
-    }));
-    const labels = classifyAll(relPaths, config.classify);
-    const summary = await new MechanicalSummarizer().summarize({
+    }))
+    const labels = classifyAll(relPaths, config.classify)
+    const { summary, why } = await new MechanicalSummarizer().summarize({
       labels,
       files,
       lastAssistantMessage,
-    });
+    })
 
-    const at = new Date();
-    const author = authorName(root);
+    const at = new Date()
+    const author = authorName(root)
     appendRow(logPath(root, config.logDir, author, at), {
       at,
       summary,
+      why,
       files,
       durationMs: state.promptStartedAt ? at.getTime() - state.promptStartedAt : -1,
       agent,
       author,
       status: "stage",
-    });
-    appendJSONL(p.queue, { date: dateKey(at), time: timeKey(at), files: relPaths });
+    })
+    appendJSONL(p.queue, { date: dateKey(at), time: timeKey(at), files: relPaths })
     writeJSON(p.state, {
       ...state,
       lastPromptText: undefined,
       promptStartedAt: undefined,
       agent: undefined,
-    });
-    return true;
+    })
+    return true
   } finally {
-    if (claimed) fs.rmSync(claimed, { force: true });
-    recordPerf(p, hook, startedAt);
+    if (claimed) fs.rmSync(claimed, { force: true })
+    recordPerf(p, hook, startedAt)
   }
 }
-
-// [dokomade] 누락 턴 자동 기록

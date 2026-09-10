@@ -3,8 +3,6 @@ import { createRequire } from "node:module";
 import { Command } from "commander";
 import { commit, push } from "./commands/commit.js";
 import { init } from "./commands/init.js";
-import { log } from "./commands/log.js";
-import { retitle } from "./commands/retitle.js";
 import { status } from "./commands/status.js";
 
 const { version, description } = createRequire(import.meta.url)("../package.json") as {
@@ -20,7 +18,14 @@ const program = new Command()
 program
   .command("init")
   .description("Install the hooks and create .dokomade/")
-  .action(async () => init());
+  .option("--frontend", "project type: client-side app")
+  .option("--backend", "project type: server APIs and services")
+  .option("--fullstack", "project type: frontend + backend")
+  .option("--library", "project type: library, plugin, or extension")
+  .action(async (options: Record<string, boolean | undefined>) => {
+    const projectType = (["frontend", "backend", "fullstack", "library"] as const).find((t) => options[t]);
+    return init(process.cwd(), projectType);
+  });
 
 program
   .command("status")
@@ -29,10 +34,8 @@ program
 
 const withCommitOptions = (cmd: Command): Command =>
   cmd
-    .option("-m, --message <message>", "commit message; skips the AI entirely")
-    .option("-F, --message-file <path>", "read the commit message from a file")
+    .option("--manual-message <message>", "manual commit title (short alias: -am)")
     .option("--orphan-title <title>", "title for the row covering unlogged changes")
-    .option("--context", "print the brief for an assistant to answer, then exit")
     .option("-y, --yes", "skip the confirmation prompt")
     .option("--no-ai", "never shell out to an AI CLI");
 
@@ -48,17 +51,7 @@ withCommitOptions(
   program.command("push").description("Commit any pending work, then push"),
 ).action((opts) => push(opts));
 
-program
-  .command("log")
-  .argument("<title>", "what you did")
-  .description("Add a log row by hand (title only)")
-  .action((title: string) => log(title));
-
-program
-  .command("retitle")
-  .argument("<title>", "replacement title for the row just written")
-  .description("Rewrite the last log row's title")
-  .action((title: string) => retitle(title));
-
-program.parse();
-
+const args = process.argv.slice(2)
+const manualIndex = args.indexOf("-am")
+if (manualIndex !== -1) args[manualIndex] = "--manual-message"
+program.parse([process.argv[0] ?? "node", process.argv[1] ?? "dokomade", ...args])

@@ -4,15 +4,8 @@
  * dokomade never holds an API key and never talks to a model provider. Both
  * paths spend the developer's own tokens:
  *
- *   B (primary)  the assistant already in the session runs `dokomade commit
- *                --context`, reads the brief, and calls back with `-m`. Zero
- *                extra process, and the message is written with the session's
- *                full context - it watched the work happen.
- *   A (fallback) `dokomade commit` from a bare terminal, where there is no
- *                assistant in the loop, shells out to whichever CLI the user
- *                already has logged in.
- *
- * This file is only path A.
+ * `dokomade commit` from a terminal shells out to whichever CLI the user
+ * already has logged in.
  */
 import { execFile } from "node:child_process";
 import fs from "node:fs";

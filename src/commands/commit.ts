@@ -54,11 +54,9 @@ import {
 import { selectAiCli } from "./init.js"
 
 export interface CommitOptions {
-  message?: string
-  messageFile?: string
+  manualMessage?: string
   /** Title for the one row covering changes that had no log row of their own. */
   orphanTitle?: string
-  context?: boolean
   yes?: boolean
   ai?: boolean
 }
@@ -145,7 +143,6 @@ function buildBrief(
   logFiles: string[],
   staged: string[],
   logged: Set<string>,
-  forAssistant: boolean,
 ): Brief {
   const rows = rowsWithStatus(logFiles, "stage")
   const briefRows = rows.slice(-MAX_BRIEF_LOG_ROWS)
@@ -198,32 +195,13 @@ function buildBrief(
     "Write one commit message that follows the commit convention. If there are multiple tasks, choose one representative type and list them in the body.",
   )
 
-  if (forAssistant) {
-    parts.push(
-      "",
-      "Once written, execute the following. Do not add any explanation besides the message.",
-      "```bash",
-      "npx dokomade commit -m \"$(cat <<'MSG'",
-      "<commit message goes here>",
-      "MSG",
-      ')"',
-      "```",
-    )
-    if (orphans.length > 0) {
-      parts.push(
-        "",
-        `Pass the ${orphans.length} changes without log entries with \`--orphan-title "<English title up to 20 characters>"\`.`,
-      )
-    }
-  } else {
-    parts.push(
-      "",
-      "Output only the commit message between the markers below. Do not write anything else.",
-      OPEN_MARK,
-      "<commit message>",
-      CLOSE_MARK,
-    )
-  }
+  parts.push(
+    "",
+    "Output only the commit message between the markers below. Do not write anything else.",
+    OPEN_MARK,
+    "<commit message>",
+    CLOSE_MARK,
+  )
 
   return { text: parts.join("\n"), stageRows: rows.length, orphans, noisyOrphans }
 }
@@ -418,7 +396,9 @@ async function failureSummary(
       `<git-error>${raw || "원인 미상"}</git-error>`,
     ].join("\n")
     const summary = (await withSpinner(`Analyzing ${operation} failure`, () => runAi(config.commit.ai, prompt, root)))
-      ?.split(/\r?\n/).map((line) => line.trim()).find(Boolean)
+      ?.split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean)
     if (summary) return summary.slice(0, 240)
   }
   return raw || "원인 미상"
@@ -435,11 +415,7 @@ async function failGit(
 }
 
 /** Returns true when a commit was made. */
-export async function commit(
-  opts: CommitOptions,
-  cwd: string = process.cwd(),
-  showReport = true,
-): Promise<boolean> {
+export async function commit(opts: CommitOptions, cwd: string = process.cwd(), showReport = true): Promise<boolean> {
   const root = findRoot(cwd)
   if (!root) return fail("dokomade is not initialised here. Run `dokomade init`.")
   if (!isRepo(root)) return fail("not a git repository.")
@@ -455,25 +431,11 @@ export async function commit(
   if (staged.length === 0) return fail("no changes to commit.")
 
   const logFiles = recentLogFiles(root, config.logDir, author, config.commit.windowDays)
-  const brief = buildBrief(root, config, logFiles, staged, loggedPaths(p), Boolean(opts.context))
+  const brief = buildBrief(root, config, logFiles, staged, loggedPaths(p))
+  let message = opts.manualMessage?.trim()
 
-  if (opts.context) {
-    console.log(brief.text)
-    return false
-  }
-
-  let message = opts.message?.trim()
-  if (!message && opts.messageFile) {
-    try {
-      message = fs.readFileSync(opts.messageFile, "utf8").trim()
-    } catch {
-      return fail(`cannot read ${opts.messageFile}`)
-    }
-  }
-
-  // Path A. Only reached from a bare terminal: an assistant would have passed
-  // -m already, having read `--context`. Ask only when this path is actually
-  // needed, then persist the answer so later commit/push calls stay silent.
+  // Ask only when no manual message was supplied, then persist the answer so
+  // later commit/push calls stay silent.
   if (!message && opts.ai !== false) {
     if (!config.commit.aiConfigured) {
       config.commit.ai = await selectAiCli()
@@ -483,10 +445,10 @@ export async function commit(
     }
   }
   if (!message && opts.ai !== false && config.commit.ai !== "none") {
-    message = (await withSpinner(
-      `Requesting commit message from ${c.cyan}${c.bold}${config.commit.ai}${c.reset}`,
-      () => runAi(config.commit.ai, brief.text, root),
-    )) ?? undefined
+    message =
+      (await withSpinner(`Requesting commit message from ${c.cyan}${c.bold}${config.commit.ai}${c.reset}`, () =>
+        runAi(config.commit.ai, brief.text, root),
+      )) ?? undefined
     if (!message) {
       console.error(
         `  ${c.yellow}${fig.warning}${c.reset}  ${c.yellow}No response from ${c.bold}${config.commit.ai}${c.reset}${c.yellow}.${c.reset}`,
@@ -497,8 +459,7 @@ export async function commit(
   if (!message) {
     console.log(brief.text)
     console.error(
-      `\n  ${c.yellow}${fig.warning}${c.reset}  ${c.bold}No commit message.${c.reset} Use the brief above to write one, then rerun with:\n` +
-        `     ${c.cyan}dokomade commit -m "<message>"${c.reset}` +
+      `\n  ${c.yellow}${fig.warning}${c.reset}  ${c.bold}No commit message.${c.reset} Configure an AI CLI or rerun with -am "<message>".` +
         (config.commit.ai === "none" && availableClis().length > 0
           ? `\n\n  ${c.dim}Tip: Set commit.ai in .dokomade/config.json to one of ${c.reset}${c.bold}${availableClis().join(" | ")}${c.reset}${c.dim} to generate automatically.${c.reset}`
           : "") +
@@ -516,7 +477,9 @@ export async function commit(
       orphansCount: brief.orphans.length,
     })
     if (!(await confirm("Do you want to commit this?"))) {
-      console.error(`  ${c.yellow}${fig.cross}${c.reset}  ${c.dim}Cancelled. Exiting without committing.${c.reset}\n`)
+      console.error(
+        `  ${c.yellow}${fig.cross}${c.reset}  ${c.dim}Cancelled. For a manual title, rerun with -am "<message>".${c.reset}\n`,
+      )
       process.exitCode = 1
       return false
     }
@@ -605,5 +568,3 @@ export async function push(opts: CommitOptions, cwd: string = process.cwd()): Pr
     notes: rows.length > 0 ? ["Log files were modified - they will be included in the next commit."] : [],
   })
 }
-
-// [dokomade] 로딩 문구 중복 제거

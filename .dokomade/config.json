@@ -26,18 +26,11 @@
     "convention": "commit-convention.md",
     // CLI that writes the message when committing from a bare terminal:
     // claude | codex | cursor | gemini | none ("none" prints the brief instead).
-    "ai": "claude",
+    "ai": "none",
     // Set once the CLI above has been chosen; false makes commit ask again.
-    "aiConfigured": true,
+    "aiConfigured": false,
     // Spend tokens describing changed files that have no log row. Off by
     // default: what survives the noise filter is usually nothing.
     "analyzeOrphans": false
-  },
-
-  // Extra log destinations beyond the markdown files; each needs its own credentials.
-  "integrations": {
-    "notion": false,
-    "slack": false,
-    "sheets": false
   }
 }

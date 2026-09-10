@@ -1,10 +1,11 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { execFileSync } from "node:child_process";
-import { describe, expect, it } from "vitest";
-import { classify, classifyAll, SHARED_LABEL } from "./classify.js";
-import { authorName, changedSince } from "./git.js";
+import { execFileSync } from "node:child_process"
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
+import { describe, expect, it } from "vitest"
+import { CLOSE_MARK, extractMessage, OPEN_MARK } from "./ai.js"
+import { classify, classifyAll, SHARED_LABEL } from "./classify.js"
+import { authorName, changedSince } from "./git.js"
 import {
   appendRow,
   formatDuration,
@@ -19,23 +20,21 @@ import {
   timeKey,
   upgradeHeader,
   withStatus,
-} from "./markdown.js";
-import { retitle } from "../commands/retitle.js";
-import { MechanicalSummarizer } from "./summarize.js";
-import { DEFAULT_CONFIG, findRoot, paths, readConfig, writeConfig, writeJSON } from "./store.js";
-import { CLOSE_MARK, OPEN_MARK, extractMessage } from "./ai.js";
+} from "./markdown.js"
+import { DEFAULT_CONFIG, findRoot, paths, readConfig, repoRelativePath, writeConfig, writeJSON } from "./store.js"
+import { MechanicalSummarizer } from "./summarize.js"
 
-const cfg = DEFAULT_CONFIG.classify;
+const cfg = DEFAULT_CONFIG.classify
 
 describe("classify", () => {
   it("maps a frontend file to its page, not its component", () => {
-    expect(classify("src/app/calculator/page.tsx", cfg)).toBe("calculator");
-    expect(classify("src/app/calculator/bottom-sheet.tsx", cfg)).toBe("calculator");
-  });
+    expect(classify("src/app/calculator/page.tsx", cfg)).toBe("calculator")
+    expect(classify("src/app/calculator/bottom-sheet.tsx", cfg)).toBe("calculator")
+  })
 
   it("maps a backend file to its REST domain", () => {
-    expect(classify("src/api/users/route.ts", cfg)).toBe("users");
-  });
+    expect(classify("src/api/users/route.ts", cfg)).toBe("users")
+  })
 
   it("uses the project root when a single-stack config has a root marker", () => {
     expect(
@@ -43,55 +42,65 @@ describe("classify", () => {
         frontend: { pageDirs: ["."], sharedDirs: [] },
         backend: { routeDirs: [] },
       }),
-    ).toBe("src");
-  });
+    ).toBe("src")
+  })
 
   it("buckets shared components separately from pages", () => {
-    expect(classify("src/components/main-header.tsx", cfg)).toBe(SHARED_LABEL);
-  });
+    expect(classify("src/components/main-header.tsx", cfg)).toBe(SHARED_LABEL)
+  })
 
   it("strips the extension when the page is a bare file", () => {
-    expect(classify("src/pages/settings.tsx", cfg)).toBe("settings");
-  });
+    expect(classify("src/pages/settings.tsx", cfg)).toBe("settings")
+  })
 
   it("falls back to the parent directory for unconfigured paths", () => {
-    expect(classify("src/i18n/ko.json", cfg)).toBe("i18n");
-  });
+    expect(classify("src/i18n/ko.json", cfg)).toBe("i18n")
+  })
 
   it("orders labels by how many files each covers", () => {
     expect(
-      classifyAll(
-        ["src/api/users/route.ts", "src/app/calculator/page.tsx", "src/app/calculator/x.tsx"],
-        cfg,
-      ),
-    ).toEqual(["calculator", "users"]);
-  });
-});
+      classifyAll(["src/api/users/route.ts", "src/app/calculator/page.tsx", "src/app/calculator/x.tsx"], cfg),
+    ).toEqual(["calculator", "users"])
+  })
+})
 
 describe("config", () => {
   it("accepts library and extension projects", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "dkmd-config-"));
-    fs.mkdirSync(path.join(root, ".dokomade"));
-    writeJSON(paths(root).config, { projectType: "library" });
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "dkmd-config-"))
+    fs.mkdirSync(path.join(root, ".dokomade"))
+    writeJSON(paths(root).config, { projectType: "library" })
 
-    expect(readConfig(paths(root)).projectType).toBe("library");
-  });
+    expect(readConfig(paths(root)).projectType).toBe("library")
+  })
 
   it("reads back a written config despite its comments", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "dkmd-config-"));
-    const p = paths(root);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "dkmd-config-"))
+    const p = paths(root)
     const written = {
       ...DEFAULT_CONFIG,
       // A value carrying `//` inside a string: the comment stripper must keep it.
       logDir: "https://example.com/logs",
       commit: { ...DEFAULT_CONFIG.commit, ai: "claude" as const, aiConfigured: true },
-    };
-    writeConfig(p, written);
+    }
+    writeConfig(p, written)
 
-    expect(fs.readFileSync(p.config, "utf8")).toContain("// Where work logs are written");
-    expect(readConfig(p)).toEqual(written);
-  });
-});
+    expect(fs.readFileSync(p.config, "utf8")).toContain("// Where work logs are written")
+    expect(readConfig(p)).toEqual(written)
+  })
+
+  it("falls back when config paths escape the project", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "dkmd-config-"))
+    const p = paths(root)
+    writeJSON(p.config, {
+      logDir: "../../outside",
+      commit: { convention: "../secret.txt" },
+    })
+
+    const config = readConfig(p)
+    expect(config.logDir).toBe(DEFAULT_CONFIG.logDir)
+    expect(config.commit.convention).toBe(DEFAULT_CONFIG.commit.convention)
+  })
+})
 
 describe("markdown", () => {
   it("renders the file cell as basename +add/-del joined by <br>", () => {
@@ -100,15 +109,15 @@ describe("markdown", () => {
         { path: "src/app/calculator/page.tsx", added: 42, removed: 13 },
         { path: "src/i18n/ko.json", added: 24, removed: 0 },
       ]),
-    ).toBe("`page.tsx` +42/-13<br>`ko.json` +24/-0");
-  });
+    ).toBe("`page.tsx` +42/-13<br>`ko.json` +24/-0")
+  })
 
   it("formats durations by magnitude", () => {
-    expect(formatDuration(35_000)).toBe("35s");
-    expect(formatDuration(4 * 60_000)).toBe("4m");
-    expect(formatDuration(62 * 60_000)).toBe("1h2m");
-    expect(formatDuration(-1)).toBe("-");
-  });
+    expect(formatDuration(35_000)).toBe("35s")
+    expect(formatDuration(4 * 60_000)).toBe("4m")
+    expect(formatDuration(62 * 60_000)).toBe("1h2m")
+    expect(formatDuration(-1)).toBe("-")
+  })
 
   it("escapes pipes so a summary cannot break the table", () => {
     const row = formatRow({
@@ -117,251 +126,252 @@ describe("markdown", () => {
       files: [{ path: "x.ts", added: 1, removed: 0 }],
       durationMs: 4 * 60_000,
       author: "noah",
-    });
-    expect(row).toBe("| 14:11 | a \\| b | `x.ts` +1/-0 | 4m | - | noah | stage |");
+    })
+    expect(row).toBe("| 14:11 | a \\| b | `x.ts` +1/-0 | 4m | - | noah | stage |")
     // Cell delimiters are the unescaped pipes: 7 columns -> 8 delimiters.
-    expect(row.replace(/\\\|/g, "").split("|").length - 1).toBe(8);
+    expect(row.replace(/\\\|/g, "").split("|").length - 1).toBe(8)
     // An escaped pipe must not shift Status into the Author slot.
-    expect(splitCells(row)).toHaveLength(7);
-    expect(statusOf(row)).toBe("stage");
-  });
-});
+    expect(splitCells(row)).toHaveLength(7)
+    expect(statusOf(row)).toBe("stage")
+  })
+})
 
 describe("MechanicalSummarizer", () => {
-  const s = new MechanicalSummarizer();
+  const s = new MechanicalSummarizer()
+  // Most cases only care about the first line; `why` has its own tests below.
+  const title = async (input: Parameters<typeof s.summarize>[0]): Promise<string> =>
+    (await s.summarize(input)).summary
 
   it("takes the line the assistant tagged", async () => {
     expect(
-      await s.summarize({
+      await title({
         labels: ["vocab"],
         files: [],
-        lastAssistantMessage: "원인 찾았습니다.\n\n[dokomade] 어휘카드 뒤로가기 수정",
+        lastAssistantMessage: "원인 찾았습니다.\n\n[summary] 어휘카드 뒤로가기 수정",
       }),
-    ).toBe("어휘카드 뒤로가기 수정");
-  });
+    ).toBe("어휘카드 뒤로가기 수정")
+  })
 
   it("takes the last tag when the assistant also explains the convention", async () => {
+    expect(
+      await title({
+        labels: [],
+        files: [],
+        lastAssistantMessage: "형식은 `[summary] <제목>` 입니다.\n- [summary] 로그인 폼 검증 추가",
+      }),
+    ).toBe("로그인 폼 검증 추가")
+  })
+
+  it("keeps why as its own line", async () => {
     expect(
       await s.summarize({
         labels: [],
         files: [],
-        lastAssistantMessage: "형식은 `[dokomade] <제목>` 입니다.\n- [dokomade] 로그인 폼 검증 추가",
+        lastAssistantMessage: "[summary] init --default 플래그 추가\n[why] CI에서 대화형 프롬프트 없이 초기화하려고",
       }),
-    ).toBe("로그인 폼 검증 추가");
-  });
+    ).toEqual({ summary: "init --default 플래그 추가", why: "CI에서 대화형 프롬프트 없이 초기화하려고" })
+  })
 
-  it("falls back to what the assistant said, stripped of markdown", async () => {
+  it("leaves why absent when the reply only tagged a title", async () => {
     expect(
-      await s.summarize({
-        labels: ["auth"],
-        files: [],
-        lastAssistantMessage: "**로그인 리다이렉트 수정**했습니다. `auth.ts`를 고쳤어요.",
-      }),
-    ).toBe("로그인 리다이렉트 수정");
-  });
+      await s.summarize({ labels: [], files: [], lastAssistantMessage: "[summary] 로그인 폼 검증 추가" }),
+    ).toEqual({ summary: "로그인 폼 검증 추가", why: undefined })
+  })
 
-  it("strips IDE context blocks the assistant quoted back", async () => {
-    expect(
-      await s.summarize({
-        labels: ["vite.config"],
-        files: [],
-        lastAssistantMessage:
-          "<ide_opened_file>The user opened the file /x/vite.config.ts in the IDE.</ide_opened_file>\n[dokomade] 어휘카드 뒤로가기 추가",
-      }),
-    ).toBe("어휘카드 뒤로가기 추가");
-  });
-
-  it("never titles a row from the prompt", async () => {
-    // The request is not the work: an untagged turn falls through to labels
-    // rather than echoing whatever the user typed.
-    expect(
-      await s.summarize({
-        labels: ["users"],
-        files: [],
-        lastAssistantMessage: "<ide_opened_file>The user opened a file</ide_opened_file>",
-      }),
-    ).toBe("users");
-  });
-
-  it("falls back to labels when there is nothing else", async () => {
-    expect(await s.summarize({ labels: ["users"], files: [] })).toBe("users");
-  });
-
-  it("skips generic acknowledgements and uses the changed file", async () => {
+  it("never invents a why for an untagged turn", async () => {
+    // The fallbacks guess at what changed; a motive cannot be guessed at all.
     expect(
       await s.summarize({
         labels: [],
         files: [{ path: "src/auth/login.ts", added: 1, removed: 0 }],
         lastAssistantMessage: "고쳤습니다.",
       }),
-    ).toBe("login 변경");
-  });
+    ).toEqual({ summary: "login 변경" })
+  })
+
+  it("falls back to what the assistant said, stripped of markdown", async () => {
+    expect(
+      await title({
+        labels: ["auth"],
+        files: [],
+        lastAssistantMessage: "**로그인 리다이렉트 수정**했습니다. `auth.ts`를 고쳤어요.",
+      }),
+    ).toBe("로그인 리다이렉트 수정")
+  })
+
+  it("strips IDE context blocks the assistant quoted back", async () => {
+    expect(
+      await title({
+        labels: ["vite.config"],
+        files: [],
+        lastAssistantMessage:
+          "<ide_opened_file>The user opened the file /x/vite.config.ts in the IDE.</ide_opened_file>\n[summary] 어휘카드 뒤로가기 추가",
+      }),
+    ).toBe("어휘카드 뒤로가기 추가")
+  })
+
+  it("never titles a row from the prompt", async () => {
+    // The request is not the work: an untagged turn falls through to labels
+    // rather than echoing whatever the user typed.
+    expect(
+      await title({
+        labels: ["users"],
+        files: [],
+        lastAssistantMessage: "<ide_opened_file>The user opened a file</ide_opened_file>",
+      }),
+    ).toBe("users")
+  })
+
+  it("falls back to labels when there is nothing else", async () => {
+    expect(await title({ labels: ["users"], files: [] })).toBe("users")
+  })
+
+  it("skips generic acknowledgements and uses the changed file", async () => {
+    expect(
+      await title({
+        labels: [],
+        files: [{ path: "src/auth/login.ts", added: 1, removed: 0 }],
+        lastAssistantMessage: "고쳤습니다.",
+      }),
+    ).toBe("login 변경")
+  })
 
   it("rejects a generic tagged title too", async () => {
     expect(
-      await s.summarize({
+      await title({
         labels: [],
         files: [{ path: "src/auth/login.ts", added: 1, removed: 0 }],
-        lastAssistantMessage: "[dokomade] 수정",
+        lastAssistantMessage: "[summary] 수정",
       }),
-    ).toBe("login 변경");
-  });
+    ).toBe("login 변경")
+  })
 
   it("has a title even with no labels", async () => {
-    expect(await s.summarize({ labels: [], files: [] })).toBe("파일 수정");
-  });
-});
+    expect(await title({ labels: [], files: [] })).toBe("파일 수정")
+  })
+})
 
 describe("findRoot boundaries", () => {
   const mk = (...segs: string[]): string => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "dkmd-"));
-    const deep = path.join(dir, ...segs);
-    fs.mkdirSync(deep, { recursive: true });
-    return dir;
-  };
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "dkmd-"))
+    const deep = path.join(dir, ...segs)
+    fs.mkdirSync(deep, { recursive: true })
+    return dir
+  }
 
   it("finds .dokomade from a nested subdirectory", () => {
-    const root = mk("packages", "web", "src");
-    fs.mkdirSync(path.join(root, ".dokomade"));
-    expect(fs.realpathSync(findRoot(path.join(root, "packages/web/src"))!)).toBe(
-      fs.realpathSync(root),
-    );
-  });
+    const root = mk("packages", "web", "src")
+    fs.mkdirSync(path.join(root, ".dokomade"))
+    expect(fs.realpathSync(findRoot(path.join(root, "packages/web/src"))!)).toBe(fs.realpathSync(root))
+  })
 
   it("stops at a repo boundary that has no .dokomade", () => {
-    const outer = mk("inner", "src");
-    fs.mkdirSync(path.join(outer, ".dokomade"));
-    fs.mkdirSync(path.join(outer, "inner", ".git"));
+    const outer = mk("inner", "src")
+    fs.mkdirSync(path.join(outer, ".dokomade"))
+    fs.mkdirSync(path.join(outer, "inner", ".git"))
     // `inner` is its own repo and was never initialised, so the outer
     // .dokomade must not capture it.
-    expect(findRoot(path.join(outer, "inner/src"))).toBeNull();
-  });
-});
+    expect(findRoot(path.join(outer, "inner/src"))).toBeNull()
+  })
+})
 
-describe("retitle", () => {
-  const setup = (time: string): { root: string; file: string } => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "dkmd-rt-"));
-    fs.mkdirSync(path.join(root, ".dokomade"));
-    const file = logPath(root, DEFAULT_CONFIG.logDir, authorName(root), new Date());
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, `| ${time} | 기계 제목 | \`a.ts\` +1/-0 | 2m | x |\n`);
-    return { root, file };
-  };
-
-  it("replaces only the title cell of the row just written", () => {
-    const { root, file } = setup(timeKey(new Date()));
-    retitle("어휘카드 다크모드 추가", root);
-    expect(fs.readFileSync(file, "utf8").trim()).toBe(
-      "| " + timeKey(new Date()) + " | 어휘카드 다크모드 추가 | `a.ts` +1/-0 | 2m | x |",
-    );
-  });
-
-  it("refuses a row old enough to belong to earlier work", () => {
-    // A slow or retried agent must not relabel a row from hours ago.
-    const { root, file } = setup("03:00");
-    const before = fs.readFileSync(file, "utf8");
-    retitle("덮어쓰면 안 됨", root);
-    expect(fs.readFileSync(file, "utf8")).toBe(before);
-  });
-});
+describe("repoRelativePath", () => {
+  it("rejects paths outside the project", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "dkmd-path-"))
+    expect(repoRelativePath(root, path.join(root, "src", "file.ts"))).toBe("src/file.ts")
+    expect(repoRelativePath(root, path.join(root, "..", "secret.txt"))).toBeNull()
+  })
+})
 
 describe("changedSince", () => {
   const repo = (): string => {
-    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "dkmd-gs-")));
-    execFileSync("git", ["-C", root, "init", "-q"]);
-    const ignore = path.join(root, ".gitignore");
-    fs.writeFileSync(ignore, "ignored/\n");
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "dkmd-gs-")))
+    execFileSync("git", ["-C", root, "init", "-q"])
+    const ignore = path.join(root, ".gitignore")
+    fs.writeFileSync(ignore, "ignored/\n")
     // Backdate the fixture itself so it never lands inside the turn window.
-    const old = (Date.now() - 3_600_000) / 1000;
-    fs.utimesSync(ignore, old, old);
-    return root;
-  };
+    const old = (Date.now() - 3_600_000) / 1000
+    fs.utimesSync(ignore, old, old)
+    return root
+  }
 
   const touch = (root: string, rel: string, at: number): void => {
-    const abs = path.join(root, rel);
-    fs.mkdirSync(path.dirname(abs), { recursive: true });
-    fs.writeFileSync(abs, "x\n");
-    fs.utimesSync(abs, at / 1000, at / 1000);
-  };
+    const abs = path.join(root, rel)
+    fs.mkdirSync(path.dirname(abs), { recursive: true })
+    fs.writeFileSync(abs, "x\n")
+    fs.utimesSync(abs, at / 1000, at / 1000)
+  }
 
   it("sees a file a Bash heredoc rewrote, and ignores one from before the turn", () => {
-    const root = repo();
-    const turnStart = Date.now();
-    touch(root, "stale.ts", turnStart - 60_000);
-    touch(root, "src/edited.ts", turnStart + 1_000);
+    const root = repo()
+    const turnStart = Date.now()
+    touch(root, "stale.ts", turnStart - 60_000)
+    touch(root, "src/edited.ts", turnStart + 1_000)
 
-    expect(changedSince(root, turnStart)).toEqual(["src/edited.ts"]);
-  });
+    expect(changedSince(root, turnStart)).toEqual(["src/edited.ts"])
+  })
 
   it("never reports a gitignored path", () => {
-    const root = repo();
-    const turnStart = Date.now();
-    touch(root, "ignored/build.js", turnStart + 1_000);
-    touch(root, "kept.ts", turnStart + 1_000);
+    const root = repo()
+    const turnStart = Date.now()
+    touch(root, "ignored/build.js", turnStart + 1_000)
+    touch(root, "kept.ts", turnStart + 1_000)
 
-    expect(changedSince(root, turnStart)).toEqual(["kept.ts"]);
-  });
+    expect(changedSince(root, turnStart)).toEqual(["kept.ts"])
+  })
 
   it("returns nothing outside a git repo", () => {
-    const bare = fs.mkdtempSync(path.join(os.tmpdir(), "dkmd-nogit-"));
-    expect(changedSince(bare, 0)).toEqual([]);
-  });
-});
+    const bare = fs.mkdtempSync(path.join(os.tmpdir(), "dkmd-nogit-"))
+    expect(changedSince(bare, 0)).toEqual([])
+  })
+})
 
 describe("status column", () => {
-  const tmp = (): string => fs.mkdtempSync(path.join(os.tmpdir(), "dkmd-st-"));
+  const tmp = (): string => fs.mkdtempSync(path.join(os.tmpdir(), "dkmd-st-"))
 
   it("treats a row written before the column existed as stage", () => {
-    expect(statusOf("| 14:00 | 뭔가 함 | `x.ts` +1/-0 | 2m | noah |")).toBe("stage");
-  });
+    expect(statusOf("| 14:00 | 뭔가 함 | `x.ts` +1/-0 | 2m | noah |")).toBe("stage")
+  })
 
   it("ignores a status cell holding something that is not a status", () => {
-    expect(statusOf("| 14:00 | a | - | - | claude | noah | 아무말 |")).toBe("stage");
-  });
+    expect(statusOf("| 14:00 | a | - | - | claude | noah | 아무말 |")).toBe("stage")
+  })
 
   it("reads a legacy row's status from where that row actually keeps it", () => {
-    expect(statusOf("| 14:00 | a | - | 2m | noah | push |")).toBe("push");
-  });
+    expect(statusOf("| 14:00 | a | - | 2m | noah | push |")).toBe("push")
+  })
 
   it("opens the AI gap on a legacy row rather than overwriting Author", () => {
-    const row = withStatus("| 14:00 | a | - | 2m | noah |", "commit");
-    expect(splitCells(row)).toEqual(["14:00", "a", "-", "2m", "-", "noah", "commit"]);
-  });
+    const row = withStatus("| 14:00 | a | - | 2m | noah |", "commit")
+    expect(splitCells(row)).toEqual(["14:00", "a", "-", "2m", "-", "noah", "commit"])
+  })
 
   it("replaces an outdated header and widens the rows under it", () => {
-    const root = tmp();
-    const file = path.join(root, "2026-09-07.md");
+    const root = tmp()
+    const file = path.join(root, "2026-09-07.md")
     fs.writeFileSync(
       file,
       [
-        "# 2026-09-07 — noah",
+        "# 2026-09-07 - noah",
         "",
         "| 시각  | 안녕바보야 | 파일 | 소요 | 작성자 |",
         "| ----- | ---- | ---- | ---- | ------ |",
         "| 14:00 | a    | -    | 2m   | noah   |",
         "",
       ].join("\n"),
-    );
-    upgradeHeader(file);
-    const lines = fs.readFileSync(file, "utf8").split("\n");
-    expect(splitCells(lines[3] as string)).toHaveLength(7);
+    )
+    upgradeHeader(file)
+    const lines = fs.readFileSync(file, "utf8").split("\n")
+    expect(splitCells(lines[3] as string)).toHaveLength(7)
     // A header is labels, not data: an old or hand-renamed one is replaced.
-    expect(splitCells(lines[2] as string)).toEqual([
-      "Time",
-      "Task",
-      "Files",
-      "Duration",
-      "AI",
-      "Author",
-      "Status",
-    ]);
+    expect(splitCells(lines[2] as string)).toEqual(["Time", "Task", "Files", "Duration", "AI", "Author", "Status"])
     // The row is data, so it is only widened: noah stays in Author.
-    expect(splitCells(lines[4] as string)).toEqual(["14:00", "a", "-", "2m", "-", "noah", ""]);
-  });
+    expect(splitCells(lines[4] as string)).toEqual(["14:00", "a", "-", "2m", "-", "noah", ""])
+  })
 
   it("moves only the rows in the requested state, and reports the count", () => {
-    const root = tmp();
-    const file = path.join(root, "log.md");
+    const root = tmp()
+    const file = path.join(root, "log.md")
     fs.writeFileSync(
       file,
       [
@@ -372,41 +382,47 @@ describe("status column", () => {
         "| 14:20 | c | - | - | noah | stage |",
         "",
       ].join("\n"),
-    );
-    expect(setStatus([file], "stage", "commit")).toEqual([{ file, rows: 2 }]);
-    expect(rowsWithStatus([file], "stage")).toEqual([]);
-    expect(rowsWithStatus([file], "commit").map((r) => r.time)).toEqual([
-      "14:00",
-      "14:10",
-      "14:20",
-    ]);
-  });
+    )
+    expect(setStatus([file], "stage", "commit")).toEqual([{ file, rows: 2 }])
+    expect(rowsWithStatus([file], "stage")).toEqual([])
+    expect(rowsWithStatus([file], "commit").map((r) => r.time)).toEqual(["14:00", "14:10", "14:20"])
+  })
 
   it("un-escapes the pipe when reading a summary back out", () => {
-    const root = tmp();
-    const file = path.join(root, "log.md");
-    const at = new Date(2026, 8, 7, 14, 0);
-    appendRow(file, { at, summary: "a | b", files: [], durationMs: -1, author: "noah" });
-    expect(rowsWithStatus([file], "stage")[0]?.summary).toBe("a | b");
-  });
+    const root = tmp()
+    const file = path.join(root, "log.md")
+    const at = new Date(2026, 8, 7, 14, 0)
+    appendRow(file, { at, summary: "a | b", files: [], durationMs: -1, author: "noah" })
+    expect(rowsWithStatus([file], "stage")[0]?.summary).toBe("a | b")
+  })
 
   it("scans the window, not just today, so an overnight row is still found", () => {
-    const root = tmp();
-    const now = new Date(2026, 8, 7, 9, 0);
-    const yesterday = new Date(2026, 8, 6, 23, 50);
+    const root = tmp()
+    const now = new Date(2026, 8, 7, 9, 0)
+    const yesterday = new Date(2026, 8, 6, 23, 50)
     appendRow(logPath(root, "docs", "noah", yesterday), {
       at: yesterday,
       summary: "밤샘",
       files: [],
       durationMs: -1,
       author: "noah",
-    });
-    expect(recentLogFiles(root, "docs", "noah", 1, now)).toEqual([]);
-    const week = recentLogFiles(root, "docs", "noah", 7, now);
-    expect(week).toHaveLength(1);
-    expect(rowsWithStatus(week, "stage")[0]?.summary).toBe("밤샘");
-  });
-});
+    })
+    expect(recentLogFiles(root, "docs", "noah", 1, now)).toEqual([])
+    const week = recentLogFiles(root, "docs", "noah", 7, now)
+    expect(week).toHaveLength(1)
+    expect(rowsWithStatus(week, "stage")[0]?.summary).toBe("밤샘")
+  })
+
+  it("normalizes author folders and still reads legacy names", () => {
+    const root = tmp()
+    const at = new Date(2026, 8, 7, 9, 0)
+    expect(logPath(root, "docs", "Noah Jang", at)).toBe(path.join(root, "docs", "noah_jang", "2026-09-07.md"))
+
+    const legacy = path.join(root, "docs", "Noah Jang", "2026-09-07.md")
+    appendRow(legacy, { at, summary: "legacy", files: [], durationMs: -1, author: "Noah Jang" })
+    expect(recentLogFiles(root, "docs", "Noah Jang", 1, at)).toEqual([legacy])
+  })
+})
 
 describe("extractMessage", () => {
   it("pulls the message out of a CLI's surrounding chatter", () => {
@@ -423,12 +439,10 @@ describe("extractMessage", () => {
           "tokens used: 812",
         ].join("\n"),
       ),
-    ).toBe("feat(log): add status column\n\nbody line");
-  });
+    ).toBe("feat(log): add status column\n\nbody line")
+  })
 
   it("falls back to the whole output when the model skipped the marker", () => {
-    expect(extractMessage("```\nfix(api): handle null\n```\n")).toBe("fix(api): handle null");
-  });
-});
-
-// [dokomade] Codex 제목 추론 검증
+    expect(extractMessage("```\nfix(api): handle null\n```\n")).toBe("fix(api): handle null")
+  })
+})

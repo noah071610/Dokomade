@@ -19,18 +19,29 @@
     "vitest": "5.0.0"
   },
   "dependencies": {
-    "commander": "15.0.0",
-    "dokomade": "file:dokomade-1.0.0.tgz",
+    "commander": "13.1.0",
     "zod": "4.5.4"
   },
   "type": "module",
   "bin": {
-    "dokomade": "./dist/cli.js"
+    "dokomade": "dist/cli.js"
   },
   "files": [
     "dist"
   ],
   "engines": {
     "node": ">=18"
-  }
+  },
+  "directories": {
+    "doc": "docs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/noah071610/Dokomade.git"
+  },
+  "keywords": [],
+  "bugs": {
+    "url": "https://github.com/noah071610/Dokomade/issues"
+  },
+  "homepage": "https://github.com/noah071610/Dokomade#readme"
 }

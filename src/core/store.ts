@@ -4,11 +4,11 @@
  * Imported by every hook entry, including the very hot on-tool path, so this
  * file must never grow a third-party import.
  */
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
 
-export const STATE_DIR = ".dokomade";
+export const STATE_DIR = ".dokomade"
 
 /**
  * Set on a child process so dokomade's own hooks no-op inside it.
@@ -22,7 +22,7 @@ export const STATE_DIR = ".dokomade";
  * check it, and on-tool runs on every file edit: it must not pull in a module
  * it otherwise has no use for.
  */
-export const SKIP_ENV = "DOKOMADE_SKIP";
+export const SKIP_ENV = "DOKOMADE_SKIP"
 
 /**
  * Headless runs of the same CLIs, which are never the user's work session.
@@ -34,36 +34,35 @@ export const SKIP_ENV = "DOKOMADE_SKIP";
  * `claude -p` spawned from inside another session inherits that parent's
  * entrypoint and is not caught here.
  */
-const HEADLESS_ENTRYPOINTS = new Set(["sdk-cli"]);
+const HEADLESS_ENTRYPOINTS = new Set(["sdk-cli"])
 
 export function shouldSkip(): boolean {
-  if (process.env[SKIP_ENV] === "1") return true;
-  return HEADLESS_ENTRYPOINTS.has(process.env.CLAUDE_CODE_ENTRYPOINT ?? "");
+  if (process.env[SKIP_ENV] === "1") return true
+  return HEADLESS_ENTRYPOINTS.has(process.env.CLAUDE_CODE_ENTRYPOINT ?? "")
 }
 
-
 export interface Paths {
-  root: string;
-  dir: string;
-  config: string;
-  state: string;
-  pending: string;
-  queue: string;
-  perf: string;
+  root: string
+  dir: string
+  config: string
+  state: string
+  pending: string
+  queue: string
+  perf: string
 }
 
 export interface State {
-  promptStartedAt?: number;
-  lastPromptText?: string;
-  sessionId?: string;
-  agent?: "claude" | "codex" | "cursor";
-  transcriptOffset?: number;
+  promptStartedAt?: number
+  lastPromptText?: string
+  sessionId?: string
+  agent?: "claude" | "codex" | "cursor"
+  transcriptOffset?: number
 }
 
 export interface PendingEntry {
-  ts: number;
-  tool: string;
-  path: string;
+  ts: number
+  tool: string
+  path: string
 }
 
 /**
@@ -80,51 +79,50 @@ export interface PendingEntry {
  */
 export interface QueueEntry {
   /** Log file date, `YYYY-MM-DD`. */
-  date: string;
+  date: string
   /** Row time, `HH:MM`. Together with `date` this addresses the markdown row. */
-  time: string;
+  time: string
   /** Repo-relative paths, full - not basenames. */
-  files: string[];
+  files: string[]
 }
 
 export interface ClassifyConfig {
-  frontend: { pageDirs: string[]; sharedDirs: string[] };
-  backend: { routeDirs: string[] };
+  frontend: { pageDirs: string[]; sharedDirs: string[] }
+  backend: { routeDirs: string[] }
 }
 
-export type ProjectType = "frontend" | "backend" | "fullstack" | "library";
+export type ProjectType = "frontend" | "backend" | "fullstack" | "library"
 
 /**
  * Which of the user's own AI CLIs `dokomade commit` may shell out to when it
  * is run from a bare terminal, with no assistant in the loop to write the
  * message itself. "none" disables the fallback: the command then prints the
- * brief and asks for `-m`.
+ * brief and asks for `-am`.
  */
-export type AiCliId = "claude" | "codex" | "cursor" | "gemini" | "none";
+export type AiCliId = "claude" | "codex" | "cursor" | "gemini" | "none"
 
 export interface CommitConfig {
   /** Days of log files `commit` scans for `stage` rows. */
-  windowDays: number;
+  windowDays: number
   /** Path to the Conventional Commits reference, relative to the repo root. */
-  convention: string;
+  convention: string
   /** CLI used for the terminal fallback. */
-  ai: AiCliId;
+  ai: AiCliId
   /** Whether the user has chosen the terminal fallback yet. */
-  aiConfigured: boolean;
+  aiConfigured: boolean
   /**
    * Spend tokens describing files that changed without a log row. Off by
    * default: after the noise filter, what is left is usually nothing, and a
    * row reading "수동 수정 (3 files)" costs zero and says nearly as much.
    */
-  analyzeOrphans: boolean;
+  analyzeOrphans: boolean
 }
 
 export interface Config {
-  logDir: string;
-  projectType: ProjectType;
-  classify: ClassifyConfig;
-  commit: CommitConfig;
-  integrations: { notion: boolean; slack: boolean; sheets: boolean };
+  logDir: string
+  projectType: ProjectType
+  classify: ClassifyConfig
+  commit: CommitConfig
 }
 
 export const DEFAULT_COMMIT: CommitConfig = {
@@ -133,7 +131,7 @@ export const DEFAULT_COMMIT: CommitConfig = {
   ai: "none",
   aiConfigured: false,
   analyzeOrphans: false,
-};
+}
 
 export const DEFAULT_CONFIG: Config = {
   logDir: "docs/dokomade",
@@ -148,11 +146,10 @@ export const DEFAULT_CONFIG: Config = {
     },
   },
   commit: DEFAULT_COMMIT,
-  integrations: { notion: false, slack: false, sheets: false },
-};
+}
 
 export function paths(root: string): Paths {
-  const dir = path.join(root, STATE_DIR);
+  const dir = path.join(root, STATE_DIR)
   return {
     root,
     dir,
@@ -161,7 +158,32 @@ export function paths(root: string): Paths {
     pending: path.join(dir, "pending.jsonl"),
     queue: path.join(dir, "queue.jsonl"),
     perf: path.join(dir, "perf.jsonl"),
-  };
+  }
+}
+
+/** Keep config paths relative to the project; config is repository-controlled input. */
+export function safeRelativePath(value: unknown, fallback: string): string {
+  if (typeof value !== "string") return fallback
+  const candidate = value.trim()
+  const normalized = candidate.replaceAll("\\", "/")
+  if (
+    !candidate ||
+    normalized.startsWith("/") ||
+    /^[A-Za-z]:/.test(normalized) ||
+    normalized.split("/").includes("..")
+  ) {
+    return fallback
+  }
+  return candidate
+}
+
+/** Return a canonical project-relative path, or null for paths outside it. */
+export function repoRelativePath(root: string, target: string): string | null {
+  const relative = path.relative(path.resolve(root), path.resolve(target))
+  if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    return null
+  }
+  return relative.split(path.sep).join("/")
 }
 
 /**
@@ -172,35 +194,35 @@ export function paths(root: string): Paths {
  * underneath it.
  */
 export function findRoot(from: string): string | null {
-  const home = os.homedir();
-  let cur = path.resolve(from);
+  const home = os.homedir()
+  let cur = path.resolve(from)
   for (;;) {
-    if (fs.existsSync(path.join(cur, STATE_DIR))) return cur;
+    if (fs.existsSync(path.join(cur, STATE_DIR))) return cur
     // A project boundary with no .dokomade/ means dokomade is not set up here.
-    if (fs.existsSync(path.join(cur, ".git"))) return null;
-    const parent = path.dirname(cur);
-    if (parent === cur || cur === home) return null;
-    cur = parent;
+    if (fs.existsSync(path.join(cur, ".git"))) return null
+    const parent = path.dirname(cur)
+    if (parent === cur || cur === home) return null
+    cur = parent
   }
 }
 
 /** Same walk, but falls back to the git root / cwd. Used by `init`. */
 export function guessRoot(from: string): string {
-  let cur = path.resolve(from);
+  let cur = path.resolve(from)
   for (;;) {
-    if (fs.existsSync(path.join(cur, STATE_DIR))) return cur;
-    if (fs.existsSync(path.join(cur, ".git"))) return cur;
-    const parent = path.dirname(cur);
-    if (parent === cur) return path.resolve(from);
-    cur = parent;
+    if (fs.existsSync(path.join(cur, STATE_DIR))) return cur
+    if (fs.existsSync(path.join(cur, ".git"))) return cur
+    const parent = path.dirname(cur)
+    if (parent === cur) return path.resolve(from)
+    cur = parent
   }
 }
 
 export function readJSON<T>(file: string, fallback: T): T {
   try {
-    return JSON.parse(fs.readFileSync(file, "utf8")) as T;
+    return JSON.parse(fs.readFileSync(file, "utf8")) as T
   } catch {
-    return fallback;
+    return fallback
   }
 }
 
@@ -213,51 +235,51 @@ export function readJSON<T>(file: string, fallback: T): T {
  * contain `//` inside a value, and a naive strip would eat the rest of the line.
  */
 function stripLineComments(src: string): string {
-  let out = "";
-  let inString = false;
-  let escaped = false;
+  let out = ""
+  let inString = false
+  let escaped = false
   for (let i = 0; i < src.length; i++) {
-    const ch = src[i];
+    const ch = src[i]
     if (inString) {
-      out += ch;
-      if (escaped) escaped = false;
-      else if (ch === "\\") escaped = true;
-      else if (ch === '"') inString = false;
-      continue;
+      out += ch
+      if (escaped) escaped = false
+      else if (ch === "\\") escaped = true
+      else if (ch === '"') inString = false
+      continue
     }
     if (ch === '"') {
-      inString = true;
-      out += ch;
-      continue;
+      inString = true
+      out += ch
+      continue
     }
     if (ch === "/" && src[i + 1] === "/") {
-      while (i < src.length && src[i] !== "\n") i++;
-      out += "\n";
-      continue;
+      while (i < src.length && src[i] !== "\n") i++
+      out += "\n"
+      continue
     }
-    out += ch;
+    out += ch
   }
-  return out;
+  return out
 }
 
 export function readJSONC<T>(file: string, fallback: T): T {
   try {
-    return JSON.parse(stripLineComments(fs.readFileSync(file, "utf8"))) as T;
+    return JSON.parse(stripLineComments(fs.readFileSync(file, "utf8"))) as T
   } catch {
-    return fallback;
+    return fallback
   }
 }
 
 /** Write via tmp + rename so a crashed hook never leaves a half-written file. */
 export function writeText(file: string, text: string): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, text);
-  fs.renameSync(tmp, file);
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  const tmp = `${file}.${process.pid}.tmp`
+  fs.writeFileSync(tmp, text)
+  fs.renameSync(tmp, file)
 }
 
 export function writeJSON(file: string, value: unknown): void {
-  writeText(file, `${JSON.stringify(value, null, 2)}\n`);
+  writeText(file, `${JSON.stringify(value, null, 2)}\n`)
 }
 
 /**
@@ -265,27 +287,27 @@ export function writeJSON(file: string, value: unknown): void {
  * hook processes interleave whole lines rather than corrupting each other.
  */
 export function appendJSONL(file: string, value: unknown): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.appendFileSync(file, `${JSON.stringify(value)}\n`);
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.appendFileSync(file, `${JSON.stringify(value)}\n`)
 }
 
 export function readJSONL<T>(file: string): T[] {
-  let raw: string;
+  let raw: string
   try {
-    raw = fs.readFileSync(file, "utf8");
+    raw = fs.readFileSync(file, "utf8")
   } catch {
-    return [];
+    return []
   }
-  const out: T[] = [];
+  const out: T[] = []
   for (const line of raw.split("\n")) {
-    if (!line.trim()) continue;
+    if (!line.trim()) continue
     try {
-      out.push(JSON.parse(line) as T);
+      out.push(JSON.parse(line) as T)
     } catch {
       // A torn line from a killed process. Drop it, keep the rest.
     }
   }
-  return out;
+  return out
 }
 
 /**
@@ -294,25 +316,25 @@ export function readJSONL<T>(file: string): T[] {
  * instead of into a file we are about to delete.
  */
 export function claimPending(p: Paths): { entries: PendingEntry[]; claimed: string | null } {
-  const claimed = `${p.pending}.${Date.now()}.${process.pid}.claim`;
+  const claimed = `${p.pending}.${Date.now()}.${process.pid}.claim`
   try {
-    fs.renameSync(p.pending, claimed);
+    fs.renameSync(p.pending, claimed)
   } catch {
-    return { entries: [], claimed: null };
+    return { entries: [], claimed: null }
   }
-  return { entries: readJSONL<PendingEntry>(claimed), claimed };
+  return { entries: readJSONL<PendingEntry>(claimed), claimed }
 }
 
 export function readState(p: Paths): State {
-  return readJSON<State>(p.state, {});
+  return readJSON<State>(p.state, {})
 }
 
 export function readConfig(p: Paths): Config {
-  const raw = readJSONC<Partial<Config>>(p.config, {});
+  const raw = readJSONC<Partial<Config>>(p.config, {})
   const aiConfigured =
-    typeof raw.commit?.aiConfigured === "boolean" ? raw.commit.aiConfigured : raw.commit?.ai !== undefined;
+    typeof raw.commit?.aiConfigured === "boolean" ? raw.commit.aiConfigured : raw.commit?.ai !== undefined
   return {
-    logDir: raw.logDir ?? DEFAULT_CONFIG.logDir,
+    logDir: safeRelativePath(raw.logDir, DEFAULT_CONFIG.logDir),
     projectType:
       raw.projectType === "frontend" ||
       raw.projectType === "backend" ||
@@ -327,13 +349,13 @@ export function readConfig(p: Paths): Config {
     commit: {
       ...DEFAULT_COMMIT,
       ...raw.commit,
+      convention: safeRelativePath(raw.commit?.convention, DEFAULT_COMMIT.convention),
       aiConfigured,
       // A window of 0 would make `commit` find nothing and report "no staged
       // rows" on a repo full of them.
       windowDays: Math.max(1, Number(raw.commit?.windowDays) || DEFAULT_COMMIT.windowDays),
     },
-    integrations: { ...DEFAULT_CONFIG.integrations, ...raw.integrations },
-  };
+  }
 }
 
 /**
@@ -345,7 +367,7 @@ export function readConfig(p: Paths): Config {
  * them, and every editor already highlights the file as JSONC.
  */
 export function writeConfig(p: Paths, config: Config): void {
-  const j = (v: unknown): string => JSON.stringify(v);
+  const j = (v: unknown): string => JSON.stringify(v)
   writeText(
     p.config,
     `{
@@ -382,26 +404,17 @@ export function writeConfig(p: Paths, config: Config): void {
     // Spend tokens describing changed files that have no log row. Off by
     // default: what survives the noise filter is usually nothing.
     "analyzeOrphans": ${j(config.commit.analyzeOrphans)}
-  },
-
-  // Extra log destinations beyond the markdown files; each needs its own credentials.
-  "integrations": {
-    "notion": ${j(config.integrations.notion)},
-    "slack": ${j(config.integrations.slack)},
-    "sheets": ${j(config.integrations.sheets)}
   }
 }
 `,
-  );
+  )
 }
 
 /** Hook wall time, for the §13 "measure before choosing a launcher" decision. */
 export function recordPerf(p: Paths, hook: string, startedAt: number): void {
   try {
-    appendJSONL(p.perf, { ts: Date.now(), hook, ms: Date.now() - startedAt });
+    appendJSONL(p.perf, { ts: Date.now(), hook, ms: Date.now() - startedAt })
   } catch {
     // Perf logging must never break a hook.
   }
 }
-
-// [dokomade] Codex 작성자 상태 추가

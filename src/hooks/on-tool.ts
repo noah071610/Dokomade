@@ -14,7 +14,7 @@ import path from "node:path";
 import { codex } from "../adapters/codex.js";
 import { claudeCode } from "../adapters/claude-code.js";
 import { cursor } from "../adapters/cursor.js";
-import { appendJSONL, findRoot, paths, recordPerf, shouldSkip } from "../core/store.js";
+import { appendJSONL, findRoot, paths, recordPerf, repoRelativePath, shouldSkip } from "../core/store.js";
 import { readPayload } from "./io.js";
 
 const startedAt = Date.now();
@@ -37,11 +37,13 @@ try {
       const p = paths(root);
       for (const filePath of event.filePaths) {
         const abs = path.resolve(event.cwd, filePath);
+        const relative = repoRelativePath(root, abs);
+        if (!relative) continue;
         // Store repo-relative so the log stays portable across machines.
         appendJSONL(p.pending, {
           ts: startedAt,
           tool: event.toolName,
-          path: path.relative(root, abs).split(path.sep).join("/"),
+          path: relative,
         });
       }
       recordPerf(p, "on-tool", startedAt);

@@ -2,17 +2,16 @@
  * The log file: docs/dokomade/<author>/<YYYY-MM-DD>.md
  *
  * Append-only, one row per prompt. Rows are never rewritten wholesale - only
- * two single cells are: Task (`dokomade retitle`) and Status (`dokomade
- * commit`/`push`). Grouping small edits into a larger narrative still happens
+ * the Status cell is updated by `commit`/`push`. Grouping small edits into a larger narrative still happens
  * later, when `commit` reads the whole window at once.
  */
-import fs from "node:fs";
-import path from "node:path";
-import type { LineDelta } from "./git.js";
-import type { AiCliId } from "./store.js";
+import fs from "node:fs"
+import path from "node:path"
+import type { LineDelta } from "./git.js"
+import { safeRelativePath, type AiCliId } from "./store.js"
 
 export interface FileChange extends LineDelta {
-  path: string;
+  path: string
 }
 
 /**
@@ -21,71 +20,81 @@ export interface FileChange extends LineDelta {
  * A row is born `stage`. It only moves forward after the git command itself
  * exited 0, so the column can never claim work that git rejected.
  */
-export type RowStatus = "stage" | "commit" | "push";
+export type RowStatus = "stage" | "commit" | "push"
 
 /**
  * Which coding agent produced the row: the adapter that recognised the hook
  * payload, or - for a row `commit` files itself - the CLI that wrote it.
  * `-` when neither is known.
  */
-export type AgentName = Exclude<AiCliId, "none">;
+export type AgentName = Exclude<AiCliId, "none">
 
 export interface LogRow {
-  at: Date;
-  summary: string;
-  files: FileChange[];
-  durationMs: number;
-  author: string;
-  agent?: AgentName;
-  status?: RowStatus;
+  at: Date
+  summary: string
+  why?: string
+  files: FileChange[]
+  durationMs: number
+  author: string
+  agent?: AgentName
+  status?: RowStatus
 }
 
-const HEADER_COLUMNS = "| Time | Task | Files | Duration | AI | Author | Status |";
-const HEADER_RULE = "| ---- | ---- | ----- | -------- | -- | ------ | ------ |";
+const HEADER_COLUMNS = "| Time | Task | Files | Duration | AI | Author | Status |"
+const HEADER_RULE = "| ---- | ---- | ----- | -------- | -- | ------ | ------ |"
 
 /** How many cells a current row has. Anything shorter predates AI or Status. */
-export const COLUMN_COUNT = 7;
-const AGENT_INDEX = 4;
-const STATUS_INDEX = 6;
+export const COLUMN_COUNT = 7
+const AGENT_INDEX = 4
+const STATUS_INDEX = 6
 
-const RULE_LINE = /^\s*\|[\s:|-]+\|\s*$/;
-const TIME_CELL = /^\d{2}:\d{2}$/;
+const RULE_LINE = /^\s*\|[\s:|-]+\|\s*$/
+const TIME_CELL = /^\d{2}:\d{2}$/
 
-const pad2 = (n: number): string => String(n).padStart(2, "0");
+const pad2 = (n: number): string => String(n).padStart(2, "0")
 
 export function dateKey(d: Date): string {
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
 }
 
 export function timeKey(d: Date): string {
-  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`
 }
 
 export function formatDuration(ms: number): string {
-  if (!Number.isFinite(ms) || ms < 0) return "-";
-  const sec = Math.round(ms / 1000);
-  if (sec < 60) return `${sec}s`;
-  const min = Math.round(sec / 60);
-  if (min < 60) return `${min}m`;
-  return `${Math.floor(min / 60)}h${min % 60}m`;
+  if (!Number.isFinite(ms) || ms < 0) return "-"
+  const sec = Math.round(ms / 1000)
+  if (sec < 60) return `${sec}s`
+  const min = Math.round(sec / 60)
+  if (min < 60) return `${min}m`
+  return `${Math.floor(min / 60)}h${min % 60}m`
 }
 
 /** Pipes and newlines would break the table row they sit in. */
 function cell(text: string): string {
-  return text.replace(/\|/g, "\\|").replace(/\r?\n/g, " ").trim();
+  return text.replace(/\|/g, "\\|").replace(/\r?\n/g, " ").trim()
+}
+
+function taskCell(summary: string, why?: string): string {
+  return cell([summary, why].filter(Boolean).join("<br>"))
 }
 
 export function formatFiles(files: FileChange[]): string {
-  if (files.length === 0) return "-";
-  return files
-    .map((f) => `\`${cell(path.posix.basename(f.path))}\` +${f.added}/-${f.removed}`)
-    .join("<br>");
+  if (files.length === 0) return "-"
+  return files.map((f) => `\`${cell(path.posix.basename(f.path))}\` +${f.added}/-${f.removed}`).join("<br>")
 }
 
 export function logPath(root: string, logDir: string, author: string, at: Date): string {
   // Author names contain spaces and, on some setups, slashes.
-  const safeAuthor = author.replace(/[\\/]/g, "-").trim() || "unknown";
-  return path.join(root, logDir, safeAuthor, `${dateKey(at)}.md`);
+  const safeAuthor = (author.replace(/[\\/]/g, "-").trim() || "unknown")
+    .toLowerCase()
+    .replace(/\s+/g, "_")
+  return path.join(root, safeRelativePath(logDir, "docs/dokomade"), safeAuthor, `${dateKey(at)}.md`)
+}
+
+function legacyLogPath(root: string, logDir: string, author: string, at: Date): string {
+  const safeAuthor = author.replace(/[\\/]/g, "-").trim() || "unknown"
+  return path.join(root, safeRelativePath(logDir, "docs/dokomade"), safeAuthor, `${dateKey(at)}.md`)
 }
 
 /**
@@ -96,36 +105,36 @@ export function logPath(root: string, logDir: string, author: string, at: Date):
  * every column after it - including Status.
  */
 export function splitCells(line: string): string[] {
-  const trimmed = line.trim();
-  if (!trimmed.startsWith("|")) return [];
-  const cells: string[] = [];
-  let cur = "";
+  const trimmed = line.trim()
+  if (!trimmed.startsWith("|")) return []
+  const cells: string[] = []
+  let cur = ""
   for (let i = 1; i < trimmed.length; i++) {
     if (trimmed[i] === "\\" && trimmed[i + 1] === "|") {
-      cur += "\\|";
-      i++;
-      continue;
+      cur += "\\|"
+      i++
+      continue
     }
     if (trimmed[i] === "|") {
-      cells.push(cur.trim());
-      cur = "";
-      continue;
+      cells.push(cur.trim())
+      cur = ""
+      continue
     }
-    cur += trimmed[i];
+    cur += trimmed[i]
   }
   // Text after the final pipe means the row is malformed; keep it rather than
   // dropping a cell silently.
-  if (cur.trim()) cells.push(cur.trim());
-  return cells;
+  if (cur.trim()) cells.push(cur.trim())
+  return cells
 }
 
 export function joinCells(cells: string[]): string {
-  return `| ${cells.join(" | ")} |`;
+  return `| ${cells.join(" | ")} |`
 }
 
 /** A data row, as opposed to the title, the header, or the rule. */
 export function isRowLine(line: string): boolean {
-  return TIME_CELL.test(splitCells(line)[0] ?? "");
+  return TIME_CELL.test(splitCells(line)[0] ?? "")
 }
 
 /**
@@ -138,11 +147,11 @@ export function isRowLine(line: string): boolean {
  * a row already at (or past) the current width is left exactly as it is.
  */
 function migrateCells(cells: string[], filler: string): string[] {
-  if (cells.length === 0 || cells.length >= COLUMN_COUNT) return cells;
-  const out = [...cells];
-  if (out.length > AGENT_INDEX) out.splice(AGENT_INDEX, 0, filler);
-  while (out.length < COLUMN_COUNT) out.push("");
-  return out;
+  if (cells.length === 0 || cells.length >= COLUMN_COUNT) return cells
+  const out = [...cells]
+  if (out.length > AGENT_INDEX) out.splice(AGENT_INDEX, 0, filler)
+  while (out.length < COLUMN_COUNT) out.push("")
+  return out
 }
 
 /**
@@ -150,27 +159,27 @@ function migrateCells(cells: string[], filler: string): string[] {
  * `stage` by definition: nothing has ever moved it forward.
  */
 export function statusOf(line: string): RowStatus {
-  const raw = migrateCells(splitCells(line), "-")[STATUS_INDEX];
-  return raw === "commit" || raw === "push" ? raw : "stage";
+  const raw = migrateCells(splitCells(line), "-")[STATUS_INDEX]
+  return raw === "commit" || raw === "push" ? raw : "stage"
 }
 
 export function withStatus(line: string, status: RowStatus): string {
-  const cells = migrateCells(splitCells(line), "-");
-  if (cells.length === 0) return line;
-  cells[STATUS_INDEX] = status;
-  return joinCells(cells);
+  const cells = migrateCells(splitCells(line), "-")
+  if (cells.length === 0) return line
+  cells[STATUS_INDEX] = status
+  return joinCells(cells)
 }
 
 export function formatRow(row: LogRow): string {
   return joinCells([
     timeKey(row.at),
-    cell(row.summary),
+    taskCell(row.summary, row.why),
     formatFiles(row.files),
     formatDuration(row.durationMs),
     row.agent ?? "-",
     cell(row.author),
     row.status ?? "stage",
-  ]);
+  ])
 }
 
 /**
@@ -184,47 +193,42 @@ export function formatRow(row: LogRow): string {
  * every append, writes only when something moved.
  */
 export function upgradeHeader(file: string): void {
-  let lines: string[];
+  let lines: string[]
   try {
-    lines = fs.readFileSync(file, "utf8").split("\n");
+    lines = fs.readFileSync(file, "utf8").split("\n")
   } catch {
-    return;
+    return
   }
   // The header is the first table line that is neither a rule nor a data row -
   // matching on its text would miss a header whose columns were renamed.
-  const i = lines.findIndex(
-    (l) => l.trim().startsWith("|") && !RULE_LINE.test(l) && !isRowLine(l),
-  );
-  let dirty = false;
+  const i = lines.findIndex((l) => l.trim().startsWith("|") && !RULE_LINE.test(l) && !isRowLine(l))
+  let dirty = false
   if (i !== -1 && lines[i] !== HEADER_COLUMNS) {
-    lines[i] = HEADER_COLUMNS;
+    lines[i] = HEADER_COLUMNS
     // The rule line directly under it has to match the new column count.
     if (RULE_LINE.test(lines[i + 1] ?? "")) {
-      lines[i + 1] = HEADER_RULE;
+      lines[i + 1] = HEADER_RULE
     }
-    dirty = true;
+    dirty = true
   }
   for (let n = 0; n < lines.length; n++) {
-    const line = lines[n] as string;
-    if (!isRowLine(line) || splitCells(line).length >= COLUMN_COUNT) continue;
-    lines[n] = joinCells(migrateCells(splitCells(line), "-"));
-    dirty = true;
+    const line = lines[n] as string
+    if (!isRowLine(line) || splitCells(line).length >= COLUMN_COUNT) continue
+    lines[n] = joinCells(migrateCells(splitCells(line), "-"))
+    dirty = true
   }
-  if (dirty) fs.writeFileSync(file, lines.join("\n"));
+  if (dirty) fs.writeFileSync(file, lines.join("\n"))
 }
 
 /** Creates the file with its header on first write, then appends one row. */
 export function appendRow(file: string, row: LogRow): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.mkdirSync(path.dirname(file), { recursive: true })
   if (!fs.existsSync(file)) {
-    fs.writeFileSync(
-      file,
-      `# ${dateKey(row.at)} — ${cell(row.author)}\n\n${HEADER_COLUMNS}\n${HEADER_RULE}\n`,
-    );
+    fs.writeFileSync(file, `# ${dateKey(row.at)} - ${cell(row.author)}\n\n${HEADER_COLUMNS}\n${HEADER_RULE}\n`)
   } else {
-    upgradeHeader(file);
+    upgradeHeader(file)
   }
-  fs.appendFileSync(file, `${formatRow(row)}\n`);
+  fs.appendFileSync(file, `${formatRow(row)}\n`)
 }
 
 /**
@@ -241,76 +245,80 @@ export function recentLogFiles(
   days: number,
   now: Date = new Date(),
 ): string[] {
-  const out: string[] = [];
+  const out: string[] = []
   for (let back = days - 1; back >= 0; back--) {
-    const day = new Date(now);
-    day.setDate(day.getDate() - back);
-    const file = logPath(root, logDir, author, day);
-    if (fs.existsSync(file)) out.push(file);
+    const day = new Date(now)
+    day.setDate(day.getDate() - back)
+    const file = logPath(root, logDir, author, day)
+    if (fs.existsSync(file)) out.push(file)
+    else {
+      const legacy = legacyLogPath(root, logDir, author, day)
+      if (legacy !== file && fs.existsSync(legacy)) out.push(legacy)
+    }
   }
-  return out;
+  return out
 }
 
 export interface StatusChange {
-  file: string;
-  rows: number;
+  file: string
+  rows: number
 }
 
 /** Move every `from` row in these files to `to`. Returns what it touched. */
 export function setStatus(files: string[], from: RowStatus, to: RowStatus): StatusChange[] {
-  const changed: StatusChange[] = [];
+  const changed: StatusChange[] = []
   for (const file of files) {
     // Before reading: a pre-Status file has no status cell to write into, and
     // widening the header rewrites the file underneath us if done after.
-    upgradeHeader(file);
-    let lines: string[];
+    upgradeHeader(file)
+    let lines: string[]
     try {
-      lines = fs.readFileSync(file, "utf8").split("\n");
+      lines = fs.readFileSync(file, "utf8").split("\n")
     } catch {
-      continue;
+      continue
     }
-    let rows = 0;
+    let rows = 0
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i] as string;
-      if (!isRowLine(line) || statusOf(line) !== from) continue;
-      lines[i] = withStatus(line, to);
-      rows++;
+      const line = lines[i] as string
+      if (!isRowLine(line) || statusOf(line) !== from) continue
+      lines[i] = withStatus(line, to)
+      rows++
     }
     if (rows > 0) {
-      fs.writeFileSync(file, lines.join("\n"));
-      changed.push({ file, rows });
+      fs.writeFileSync(file, lines.join("\n"))
+      changed.push({ file, rows })
     }
   }
-  return changed;
+  return changed
 }
 
 export interface ParsedRow {
-  file: string;
-  time: string;
-  summary: string;
-  status: RowStatus;
+  file: string
+  time: string
+  summary: string
+  status: RowStatus
 }
 
 /** Every row in these files with the given status, in file order. */
 export function rowsWithStatus(files: string[], status: RowStatus): ParsedRow[] {
-  const out: ParsedRow[] = [];
+  const out: ParsedRow[] = []
   for (const file of files) {
-    let raw: string;
+    let raw: string
     try {
-      raw = fs.readFileSync(file, "utf8");
+      raw = fs.readFileSync(file, "utf8")
     } catch {
-      continue;
+      continue
     }
     for (const line of raw.split("\n")) {
-      if (!isRowLine(line) || statusOf(line) !== status) continue;
-      const cells = splitCells(line);
+      if (!isRowLine(line) || statusOf(line) !== status) continue
+      const cells = splitCells(line)
       out.push({
         file,
         time: cells[0] as string,
         summary: (cells[1] ?? "").replace(/\\\|/g, "|"),
         status,
-      });
+      })
     }
   }
-  return out;
+  return out
 }
