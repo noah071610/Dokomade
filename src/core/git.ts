@@ -26,6 +26,19 @@ export function isRepo(root: string): boolean {
   return git(root, ["rev-parse", "--git-dir"]) !== null;
 }
 
+/** 경로를 포함하는 저장소를 반환하며, Git 밖이면 null을 반환한다. */
+export function repoTopLevel(root: string): string | null {
+  return git(root, ["rev-parse", "--show-toplevel"])?.trim() || null;
+}
+
+/** 스테이징 전 저장소에서 변경된 파일을 반환한다. */
+export function changedFiles(root: string): string[] {
+  return (git(root, ["status", "--porcelain", "--untracked-files=all"]) ?? "")
+    .split("\n")
+    .map((line) => line.slice(3).trim())
+    .filter(Boolean);
+}
+
 /**
  * A revision resolved to its commit sha, or null when git cannot resolve it -
  * an unfetched sha, the all-zero sha a first push reports, or a bare "".
@@ -103,7 +116,22 @@ export function lineDeltas(root: string, relPaths: string[]): Map<string, LineDe
  * need their own row.
  */
 export function changedSince(root: string, sinceMs: number): string[] {
-  if (!Number.isFinite(sinceMs) || !isRepo(root)) return [];
+  if (!Number.isFinite(sinceMs)) return [];
+  if (!isRepo(root)) {
+    let entries: fs.Dirent[]
+    try {
+      entries = fs.readdirSync(root, { withFileTypes: true })
+    } catch {
+      return []
+    }
+    return entries
+      .filter((entry) => entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules")
+      .flatMap((entry) => {
+        const child = path.join(root, entry.name)
+        if (!isRepo(child)) return []
+        return changedSince(child, sinceMs).map((file) => path.join(entry.name, file).split(path.sep).join("/"))
+      })
+  }
   const raw = git(root, [
     "status",
     "--porcelain",

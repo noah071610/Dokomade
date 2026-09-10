@@ -38,6 +38,7 @@ const withCommitOptions = (cmd: Command): Command =>
   cmd
     .option("--manual-message <message>", "manual commit title (short alias: -am)")
     .option("--orphan-title <title>", "title for the row covering unlogged changes")
+    .option("--repo <name>", "repository to commit in a multi-repository workspace")
     .option("-y, --yes", "skip the confirmation prompt")
     .option("--no-ai", "never shell out to an AI CLI");
 

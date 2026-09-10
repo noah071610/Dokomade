@@ -7,6 +7,7 @@
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
+import { repoTopLevel } from "./git.js"
 
 export const STATE_DIR = ".dokomade"
 
@@ -49,6 +50,39 @@ export interface Paths {
   pending: string
   queue: string
   perf: string
+}
+
+export interface WorkspaceRepository {
+  name: string
+  root: string
+  relative: string
+}
+
+/** 초기화된 workspace가 Git이 아닐 때 바로 아래 저장소를 찾는다. */
+export function workspaceRepositories(root: string): WorkspaceRepository[] {
+  const workspace = fs.realpathSync(path.resolve(root))
+  const own = repoTopLevel(workspace)
+  if (own) return [{ name: path.basename(own), root: own, relative: "." }]
+
+  let entries: fs.Dirent[]
+  try {
+    entries = fs.readdirSync(workspace, { withFileTypes: true })
+  } catch {
+    return []
+  }
+
+  const seen = new Set<string>()
+  const repos = entries
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules")
+    .map((entry) => {
+      const repo = repoTopLevel(path.join(workspace, entry.name))
+      return repo ? fs.realpathSync(repo) : null
+    })
+    .filter((repo): repo is string => typeof repo === "string")
+    .filter((repo) => path.dirname(repo) === workspace)
+    .filter((repo) => !seen.has(repo) && seen.add(repo))
+  return repos.map((repo) => ({ name: path.basename(repo), root: repo, relative: path.relative(workspace, repo) || "." }))
 }
 
 export interface State {
@@ -197,29 +231,21 @@ export function repoRelativePath(root: string, target: string): string | null {
  * `cd`-ed into. The top-level init wins, even when the subfolder kept its own
  * `.git`.
  *
- * Past a repository boundary only a folder with a `package.json` may claim the
- * logs: a stray `dokomade init` in a plain folder like `~/Projects` must not
- * silently capture every project underneath it. The walk never leaves the
- * home directory, and a repo that was never initialised is never captured.
+ * A parent workspace init always wins, including over child repository
+ * installs. The walk never leaves the home directory, and a repo that was
+ * never initialised is never captured.
  */
 export function findRoot(from: string): string | null {
   const home = os.homedir()
   let cur = path.resolve(from)
   let found: string | null = null
-  let crossedRepo = false
   for (;;) {
     if (
       // Home never overrides a project below it.
       !(found && cur === home) &&
-      fs.existsSync(path.join(cur, STATE_DIR)) &&
-      (!crossedRepo || fs.existsSync(path.join(cur, "package.json")))
+      fs.existsSync(path.join(cur, STATE_DIR))
     ) {
       found = cur
-    }
-    if (fs.existsSync(path.join(cur, ".git"))) {
-      // A repo with no init of its own is not ours, whatever sits above it.
-      if (!found) return null
-      crossedRepo = true
     }
     const parent = path.dirname(cur)
     if (parent === cur || cur === home) return found

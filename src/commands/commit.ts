@@ -23,10 +23,10 @@ import { report } from "../core/banner.js"
 import { loadEnvFile, notionEnv, sheetsEnv } from "../core/env.js"
 import {
   authorName,
+  changedFiles,
   currentBranch,
   gitPassthrough,
   hasUpstream,
-  isRepo,
   lineDeltas,
   resolveRev,
   stagedDiff,
@@ -46,12 +46,16 @@ import {
   STATE_DIR,
   findRoot,
   paths,
+  repoRelativePath,
   readConfig,
   readJSONL,
+  workspaceRepositories,
   writeConfig,
+  writeText,
   type Config,
   type Paths,
   type QueueEntry,
+  type WorkspaceRepository,
 } from "../core/store.js"
 import { selectAiCli } from "./init.js"
 import { sync } from "./sync.js"
@@ -62,6 +66,7 @@ export interface CommitOptions {
   orphanTitle?: string
   yes?: boolean
   ai?: boolean
+  repo?: string
 }
 
 /** Diff lines from orphan files that the brief may carry. */
@@ -127,6 +132,30 @@ function loggedPaths(p: Paths): Set<string> {
   return out
 }
 
+function repoLoggedPaths(p: Paths, workspaceRoot: string, repoRoot: string): Set<string> {
+  const out = new Set<string>()
+  for (const file of loggedPaths(p)) {
+    const relative = repoRelativePath(repoRoot, path.resolve(workspaceRoot, file))
+    if (relative) out.add(relative)
+  }
+  return out
+}
+
+function removeRepoQueue(p: Paths, workspaceRoot: string, repoRoot: string): void {
+  const remaining = readJSONL<QueueEntry>(p.queue)
+    .map((entry) => ({
+      ...entry,
+      files: entry.files.filter((file) => repoRelativePath(repoRoot, path.resolve(workspaceRoot, file)) === null),
+    }))
+    .filter((entry) => entry.files.length > 0)
+  if (remaining.length === 0) fs.rmSync(p.queue, { force: true })
+  else writeText(p.queue, `${remaining.map((entry) => JSON.stringify(entry)).join("\n")}\n`)
+}
+
+function rowBelongsToRepo(row: { files: FileChange[] }, workspaceRoot: string, repoRoot: string): boolean {
+  return row.files.some((file) => repoRelativePath(repoRoot, path.resolve(workspaceRoot, file.path)) !== null)
+}
+
 function briefPaths(files: string[]): string {
   const shown = files.slice(0, MAX_BRIEF_PATHS).map((file) => `- ${file}`)
   if (files.length > MAX_BRIEF_PATHS) shown.push(`- ... ${files.length - MAX_BRIEF_PATHS} files omitted`)
@@ -146,8 +175,10 @@ function buildBrief(
   logFiles: string[],
   staged: string[],
   logged: Set<string>,
+  gitRoot = root,
+  includeRow: (row: ReturnType<typeof rowsWithStatus>[number]) => boolean = () => true,
 ): Brief {
-  const rows = rowsWithStatus(logFiles, "stage")
+  const rows = rowsWithStatus(logFiles, "stage").filter(includeRow)
   const briefRows = rows.slice(-MAX_BRIEF_LOG_ROWS)
 
   // With rows but no ledger, every path looks unlogged - and the queue is
@@ -170,7 +201,7 @@ function buildBrief(
     "## Work logs included in this commit",
     briefRows.length > 0
       ? [
-          briefRows.map((r) => `- ${r.time} ${r.summary}`).join("\n"),
+          briefRows.map((r) => `- ${r.time} [${r.scope}] ${r.summary}`).join("\n"),
           ...(rows.length > MAX_BRIEF_LOG_ROWS
             ? [`- ... ${rows.length - MAX_BRIEF_LOG_ROWS} earlier log rows omitted`]
             : []),
@@ -181,7 +212,7 @@ function buildBrief(
   if (orphans.length > 0) {
     parts.push("", "## Changes without log entries", briefPaths(orphans))
     if (config.commit.analyzeOrphans) {
-      const diff = stagedDiff(root, orphans.slice(0, MAX_BRIEF_PATHS), ORPHAN_DIFF_LINES)
+      const diff = stagedDiff(gitRoot, orphans.slice(0, MAX_BRIEF_PATHS), ORPHAN_DIFF_LINES)
       if (diff) parts.push("", "```diff", diff, "```")
     }
   }
@@ -215,12 +246,19 @@ function buildBrief(
  * Its AI cell is the commit CLI, not a hook adapter: no turn produced this row,
  * `dokomade commit` did, and the CLI in the config is what wrote its title.
  */
-function writeOrphanRow(root: string, config: Config, orphans: string[], title: string): string {
+function writeOrphanRow(
+  root: string,
+  config: Config,
+  orphans: string[],
+  title: string,
+  gitRoot = root,
+  workspacePrefix = "",
+): string {
   const at = new Date()
   const author = authorName(root)
-  const deltas = lineDeltas(root, orphans)
+  const deltas = lineDeltas(gitRoot, orphans)
   const files: FileChange[] = orphans.map((rel) => ({
-    path: rel,
+    path: workspacePrefix ? path.posix.join(workspacePrefix, rel) : rel,
     added: deltas.get(rel)?.added ?? 0,
     removed: deltas.get(rel)?.removed ?? 0,
   }))
@@ -374,6 +412,38 @@ async function confirm(question: string): Promise<boolean> {
   }
 }
 
+async function selectRepository(
+  repositories: WorkspaceRepository[],
+  requested: string | undefined,
+): Promise<WorkspaceRepository | null> {
+  if (requested) {
+    const selected = repositories.find((repo) => repo.name === requested || repo.relative === requested)
+    if (selected) return selected
+    fail(`unknown repository: ${requested}`)
+    return null
+  }
+  if (repositories.length === 1) return repositories[0] ?? null
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    fail(`multiple repositories found. Rerun with --repo <name>: ${repositories.map((repo) => repo.name).join(", ")}`)
+    return null
+  }
+
+  console.log("\n  Which repository do you want to commit?")
+  repositories.forEach((repo, index) => console.log(`  ${index + 1}) ${repo.name} (${repo.relative})`))
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+  try {
+    const answer = (await rl.question("  Select a repository: ")).trim()
+    const index = Number(answer) - 1
+    if (!Number.isInteger(index) || !repositories[index]) {
+      fail("invalid repository selection.")
+      return null
+    }
+    return repositories[index] ?? null
+  } finally {
+    rl.close()
+  }
+}
+
 function fail(message: string): false {
   console.error(`\n  ${c.red}${fig.cross}${c.reset}  ${c.red}${message}${c.reset}\n`)
   process.exitCode = 1
@@ -422,20 +492,28 @@ async function failGit(
 export async function commit(opts: CommitOptions, cwd: string = process.cwd(), showReport = true): Promise<boolean> {
   const root = findRoot(cwd)
   if (!root) return fail("dokomade is not initialised here. Run `dokomade init`.")
-  if (!isRepo(root)) return fail("not a git repository.")
+
+  const repositories = workspaceRepositories(root).filter((repo) => changedFiles(repo.root).length > 0)
+  if (repositories.length === 0) return fail("no changes to commit.")
+  const repository = await selectRepository(repositories, opts.repo)
+  if (!repository) return false
+  const gitRoot = repository.root
 
   const p = paths(root)
   const config = readConfig(p)
   const author = authorName(root)
 
-  const add = gitPassthrough(root, ["add", "-A"])
+  const add = gitPassthrough(gitRoot, ["add", "-A"])
   if (!add.ok) return failGit("git add", add, config, root, opts.ai !== false)
 
-  const staged = stagedFiles(root)
+  const staged = stagedFiles(gitRoot)
   if (staged.length === 0) return fail("no changes to commit.")
 
   const logFiles = recentLogFiles(root, config.logDir, author, config.commit.windowDays)
-  const brief = buildBrief(root, config, logFiles, staged, loggedPaths(p))
+  const logged = repoLoggedPaths(p, root, gitRoot)
+  const includeRow = (row: ReturnType<typeof rowsWithStatus>[number]): boolean =>
+    rowBelongsToRepo(row, root, gitRoot)
+  const brief = buildBrief(root, config, logFiles, staged, logged, gitRoot, includeRow)
   let message = opts.manualMessage?.trim()
 
   // Ask only when no manual message was supplied, then persist the answer so
@@ -445,13 +523,13 @@ export async function commit(opts: CommitOptions, cwd: string = process.cwd(), s
       config.commit.ai = await selectAiCli()
       config.commit.aiConfigured = true
       writeConfig(p, config)
-      gitPassthrough(root, ["add", "--", path.relative(root, p.config)])
+      if (gitRoot === root) gitPassthrough(root, ["add", "--", path.relative(root, p.config)])
     }
   }
   if (!message && opts.ai !== false && config.commit.ai !== "none") {
     message =
       (await withSpinner(`Requesting commit message from ${c.cyan}${c.bold}${config.commit.ai}${c.reset}`, () =>
-        runAi(config.commit.ai, brief.text, root),
+        runAi(config.commit.ai, brief.text, gitRoot),
       )) ?? undefined
     if (!message) {
       console.error(
@@ -477,7 +555,7 @@ export async function commit(opts: CommitOptions, cwd: string = process.cwd(), s
     renderCommitPreview(message, {
       stagedCount: staged.length,
       stageRows: brief.stageRows,
-      branch: currentBranch(root) || "-",
+      branch: currentBranch(gitRoot) || "-",
       orphansCount: brief.orphans.length,
     })
     if (!(await confirm("Do you want to commit this?"))) {
@@ -494,25 +572,33 @@ export async function commit(opts: CommitOptions, cwd: string = process.cwd(), s
   if (brief.orphans.length > 0) {
     const title =
       opts.orphanTitle?.trim() || `Manual changes (${brief.orphans.length + brief.noisyOrphans.length} files)`
-    touched.push(writeOrphanRow(root, config, brief.orphans, title))
+    touched.push(
+      writeOrphanRow(root, config, brief.orphans, title, gitRoot, repository.relative === "." ? "" : repository.relative),
+    )
   }
-  const rel = [...new Set(touched)].map((f) => path.relative(root, f))
-  if (rel.length > 0) gitPassthrough(root, ["add", "--", ...rel])
+  if (gitRoot === root) {
+    const rel = [...new Set(touched)].map((f) => path.relative(root, f))
+    if (rel.length > 0) gitPassthrough(root, ["add", "--", ...rel])
+  }
 
-  const committed = gitPassthrough(root, ["commit", "-F", "-"], `${message}\n`)
+  const committed = gitPassthrough(gitRoot, ["commit", "-F", "-"], `${message}\n`)
   if (!committed.ok) return failGit("git commit", committed, config, root, opts.ai !== false)
 
   // Step 6. Everything the window still calls `stage` is now committed. Read
   // the rows before flipping them: afterwards they are no longer `stage`.
   const files = [...new Set(touched)]
-  const rows = rowsWithStatus(files, "stage")
-  setStatus(files, "stage", "commit")
-  fs.rmSync(p.queue, { force: true })
+  const rows = rowsWithStatus(files, "stage").filter(includeRow)
+  setStatus(files, "stage", "commit", includeRow)
+  removeRepoQueue(p, root, gitRoot)
 
   if (showReport) {
     report({
       verb: "commit",
-      meta: [`${dateKey(new Date())} ${timeKey(new Date())}`, currentBranch(root) || "-", `${staged.length} files`],
+      meta: [
+        `${dateKey(new Date())} ${timeKey(new Date())}`,
+        `${repository.name}:${currentBranch(gitRoot) || "-"}`,
+        `${staged.length} files`,
+      ],
       rows,
     })
   }
@@ -529,16 +615,17 @@ export async function commit(opts: CommitOptions, cwd: string = process.cwd(), s
  * integration must be configured before anything is sent: syncing half of
  * them would turn a clean push into a red exit code.
  */
-async function syncAfterPush(root: string, config: Config, before: string | null): Promise<void> {
+async function syncAfterPush(root: string, config: Config, before: string | null, gitRoot = root): Promise<void> {
   const { notion, sheets } = config.integrations
   if (!notion && !sheets) return
+  if (gitRoot !== root) return
   loadEnvFile(root)
   if (notion && !notionEnv()) return
   if (sheets && !sheetsEnv()) return
   // `before` is the upstream sha read before the push, so the range is exactly
   // the commits this push published - the same range the workflow gets from
   // `github.event.before`.
-  await sync({ since: before ?? "HEAD~1" }, root)
+  await sync({ since: before ?? "HEAD~1" }, gitRoot)
 }
 
 export async function push(opts: CommitOptions, cwd: string = process.cwd()): Promise<void> {
@@ -547,15 +634,19 @@ export async function push(opts: CommitOptions, cwd: string = process.cwd()): Pr
     fail("dokomade is not initialised here. Run `dokomade init`.")
     return
   }
-  if (!isRepo(root)) {
+  const repositories = workspaceRepositories(root)
+  if (repositories.length === 0) {
     fail("not a git repository.")
     return
   }
+  const repository = await selectRepository(repositories, opts.repo)
+  if (!repository) return
+  const gitRoot = repository.root
 
   // A dirty tree means there is work to commit first - `dokomade push` on
   // uncommitted work should not silently push the previous state.
   const config = readConfig(paths(root))
-  const add = gitPassthrough(root, ["add", "-A"])
+  const add = gitPassthrough(gitRoot, ["add", "-A"])
   if (!add.ok) {
     failGit("git add", add, config, root, opts.ai !== false)
     return
@@ -563,38 +654,40 @@ export async function push(opts: CommitOptions, cwd: string = process.cwd()): Pr
   // Bookkeeping does not count as work. Step 6 of the last commit left the log
   // dirty by design; without this the tree is permanently non-empty and
   // `dokomade push` could never be a plain push again.
-  const pending = stagedFiles(root).filter((rel) => !isBookkeeping(rel, config.logDir))
+  const pending = stagedFiles(gitRoot).filter((rel) => !isBookkeeping(rel, config.logDir))
   if (pending.length > 0) {
     process.exitCode = 0
-    if (!(await commit(opts, cwd, false))) return
+    if (!(await commit({ ...opts, repo: repository.name }, cwd, false))) return
   }
 
-  const branch = currentBranch(root)
+  const branch = currentBranch(gitRoot)
   // Read before pushing: afterwards @{u} has already moved to the new head.
-  const before = resolveRev(root, "@{u}")
-  const args = hasUpstream(root) ? ["push"] : branch ? ["push", "-u", "origin", branch] : ["push"]
+  const before = resolveRev(gitRoot, "@{u}")
+  const args = hasUpstream(gitRoot) ? ["push"] : branch ? ["push", "-u", "origin", branch] : ["push"]
   if (process.stdout.isTTY) {
     console.log(
       `\n  ${c.cyan}${fig.step}${c.reset}  ${c.dim}Pushing to remote (${c.reset}${c.cyan}${branch || "origin"}${c.reset}${c.dim})...${c.reset}`,
     )
   }
-  const pushed = gitPassthrough(root, args)
+  const pushed = gitPassthrough(gitRoot, args)
   if (!pushed.ok) {
     failGit("git push", pushed, config, root, opts.ai !== false)
     return
   }
 
   const logFiles = recentLogFiles(root, config.logDir, authorName(root), config.commit.windowDays)
-  const rows = rowsWithStatus(logFiles, "commit")
-  setStatus(logFiles, "commit", "push")
+  const includeRow = (row: ReturnType<typeof rowsWithStatus>[number]): boolean =>
+    rowBelongsToRepo(row, root, gitRoot)
+  const rows = rowsWithStatus(logFiles, "commit").filter(includeRow)
+  setStatus(logFiles, "commit", "push", includeRow)
 
   report({
     verb: "push",
-    meta: [`${dateKey(new Date())} ${timeKey(new Date())}`, branch || "-", `${rows.length} rows`],
+    meta: [`${dateKey(new Date())} ${timeKey(new Date())}`, `${repository.name}:${branch || "-"}`, `${rows.length} rows`],
     rows,
     // Honest about step 6's cost rather than letting it look like a stray diff.
     notes: rows.length > 0 ? ["Log files were modified - they will be included in the next commit."] : [],
   })
 
-  await syncAfterPush(root, config, before)
+  await syncAfterPush(root, config, before, gitRoot)
 }

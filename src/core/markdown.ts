@@ -393,8 +393,13 @@ export interface StatusChange {
   rows: number
 }
 
-/** Move every `from` row in these files to `to`. Returns what it touched. */
-export function setStatus(files: string[], from: RowStatus, to: RowStatus): StatusChange[] {
+/** Move matching `from` rows in these files to `to`. Returns what it touched. */
+export function setStatus(
+  files: string[],
+  from: RowStatus,
+  to: RowStatus,
+  include: (row: ParsedRow) => boolean = () => true,
+): StatusChange[] {
   const changed: StatusChange[] = []
   for (const file of files) {
     // Before reading: a pre-Status file has no status cell to write into, and
@@ -409,7 +414,8 @@ export function setStatus(files: string[], from: RowStatus, to: RowStatus): Stat
     let rows = 0
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i] as string
-      if (!isRowLine(line) || statusOf(line) !== from) continue
+      const row = parsedRow(line, file, from)
+      if (!row || !include(row)) continue
       lines[i] = withStatus(line, to)
       rows++
     }
@@ -425,7 +431,22 @@ export interface ParsedRow {
   file: string
   time: string
   summary: string
+  files: FileChange[]
+  scope: WorkScope
   status: RowStatus
+}
+
+function parsedRow(line: string, file: string, status: RowStatus): ParsedRow | null {
+  if (!isRowLine(line) || statusOf(line) !== status) return null
+  const cells = migrateCells(splitCells(line), "")
+  return {
+    file,
+    time: cells[0] as string,
+    summary: (cells[1] ?? "").replace(/\\\|/g, "|"),
+    files: parseFiles(cells[FILES_INDEX] ?? "-"),
+    scope: normalizeScope(cells[SCOPE_INDEX] ?? ""),
+    status,
+  }
 }
 
 /** Every row in these files with the given status, in file order. */
@@ -439,14 +460,8 @@ export function rowsWithStatus(files: string[], status: RowStatus): ParsedRow[] 
       continue
     }
     for (const line of raw.split("\n")) {
-      if (!isRowLine(line) || statusOf(line) !== status) continue
-      const cells = migrateCells(splitCells(line), "")
-      out.push({
-        file,
-        time: cells[0] as string,
-        summary: (cells[1] ?? "").replace(/\\\|/g, "|"),
-        status,
-      })
+      const row = parsedRow(line, file, status)
+      if (row) out.push(row)
     }
   }
   return out

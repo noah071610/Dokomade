@@ -31,6 +31,7 @@ import {
   repoRelativePath,
   writeConfig,
   writeJSON,
+  workspaceRepositories,
 } from "./store.js"
 import { MechanicalSummarizer } from "./summarize.js"
 
@@ -334,13 +335,11 @@ describe("findRoot boundaries", () => {
     expect(fs.realpathSync(findRoot(path.join(root, "packages/web/src"))!)).toBe(fs.realpathSync(root))
   })
 
-  it("stops at a repo boundary that has no .dokomade", () => {
+  it("lets a parent workspace own an initialized child repo", () => {
     const outer = mk("inner", "src")
     fs.mkdirSync(path.join(outer, ".dokomade"))
     fs.mkdirSync(path.join(outer, "inner", ".git"))
-    // `inner` is its own repo and was never initialised, so the outer
-    // .dokomade must not capture it.
-    expect(findRoot(path.join(outer, "inner/src"))).toBeNull()
+    expect(fs.realpathSync(findRoot(path.join(outer, "inner/src"))!)).toBe(fs.realpathSync(outer))
   })
 
   it("prefers the top-level init over one left behind in a subfolder", () => {
@@ -356,15 +355,35 @@ describe("findRoot boundaries", () => {
     expect(fs.realpathSync(findRoot(path.join(parent, "frontend/src"))!)).toBe(fs.realpathSync(parent))
   })
 
-  it("does not let a stray init in a plain folder capture a repo below it", () => {
+  it("lets the parent win even when it has no package.json", () => {
     const projects = mk("app", "src")
     fs.mkdirSync(path.join(projects, ".dokomade"))
     fs.mkdirSync(path.join(projects, "app", ".dokomade"))
     fs.mkdirSync(path.join(projects, "app", ".git"))
-    // `projects` has no package.json: it is a folder of repos, not a package.
-    expect(fs.realpathSync(findRoot(path.join(projects, "app/src"))!)).toBe(
-      fs.realpathSync(path.join(projects, "app")),
-    )
+    expect(fs.realpathSync(findRoot(path.join(projects, "app/src"))!)).toBe(fs.realpathSync(projects))
+  })
+
+  it("does not discover child installs when the parent is not initialized", () => {
+    const parent = mk("frontend", "src")
+    fs.mkdirSync(path.join(parent, "frontend", ".dokomade"))
+    fs.mkdirSync(path.join(parent, "frontend", ".git"))
+    expect(findRoot(parent)).toBeNull()
+  })
+})
+
+describe("workspace repositories", () => {
+  it("registers direct child Git repositories under a non-Git workspace", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "dkmd-workspace-"))
+    for (const name of ["frontend", "backend"]) {
+      const repo = path.join(root, name)
+      fs.mkdirSync(repo)
+      execFileSync("git", ["-C", repo, "init", "-q"])
+    }
+
+    expect(workspaceRepositories(root).map((repo) => [repo.name, repo.relative])).toEqual([
+      ["backend", "backend"],
+      ["frontend", "frontend"],
+    ])
   })
 })
 

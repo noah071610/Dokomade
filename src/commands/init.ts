@@ -248,7 +248,9 @@ async function selectPrompt<T>(options: SelectPromptOptions<T>): Promise<number[
 
     const finish = (): void => {
       if (multi && required && checked.size === 0) {
-        process.stdout.write("\x07")
+        process.stdout.write(
+          `\n${c.yellow}${fig.step}${c.reset}  Select at least one folder with Spacebar, then press Enter to continue.\n`,
+        )
         return
       }
       cleanup()
@@ -323,9 +325,10 @@ async function selectRootFolders(root: string, title: string): Promise<string[]>
   const folders = rootFolders(root)
   const selected = await selectPrompt({
     title,
-    hint: "(Use ↑/↓ to navigate, Space to toggle, Enter to confirm)",
+    hint: "(Use ↑/↓ to navigate, Spacebar to select, Enter to continue)",
     items: folders.map((folder) => ({ label: folder, value: folder, description: "" })),
     multi: true,
+    required: true,
   })
   return selected.map((i) => folders[i]).filter((folder): folder is string => Boolean(folder))
 }

@@ -1,8 +1,6 @@
 {
   "logDir": "docs/dokomade",
-
   "projectType": "library",
-
   "classify": {
     "frontend": {
       "pageDirs": [],
@@ -12,15 +10,13 @@
       "routeDirs": []
     }
   },
-
   "commit": {
     "windowDays": 7,
     "convention": "commit-convention.md",
-    "ai": "none",
-    "aiConfigured": false,
+    "ai": "codex",
+    "aiConfigured": true,
     "analyzeOrphans": false
   },
-
   "integrations": {
     "notion": false,
     "sheets": false

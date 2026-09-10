@@ -100,6 +100,14 @@ npx dokomade init --fullstack
 npx dokomade init --library
 ```
 
+### Workspace with separate frontend and backend repositories
+
+If one workspace contains sibling Git repositories, install and initialize dokomade at the parent workspace root. The parent owns the session, discovers direct child repositories with Git, and `commit`/`push` asks which changed repository to use. Pass `--repo <name>` for non-interactive runs.
+
+Child `.dokomade/` folders do not create extra sessions while the parent is open. They only apply when that child folder is opened directly. Without a parent `.dokomade/`, a parent workspace does not discover or activate child installs.
+
+When the parent workspace is not itself a Git repository, its `docs/dokomade/` logs can still be written locally, but they cannot be included in a frontend or backend commit. Use a separate documentation repository if those logs must be versioned.
+
 The type flag skips the interactive project-type and folder pickers, making these commands safe to run unattended.
 
 One prompt can still appear: if `docs/dokomade/` already exists, init asks whether to wipe old logs. It defaults to **no** and auto-answers `no` when stdin is not a TTY.
