@@ -2,8 +2,10 @@
 import { createRequire } from "node:module";
 import { Command } from "commander";
 import { commit, push } from "./commands/commit.js";
+import { connect } from "./commands/connect.js";
 import { init } from "./commands/init.js";
 import { status } from "./commands/status.js";
+import { sync } from "./commands/sync.js";
 
 const { version, description } = createRequire(import.meta.url)("../package.json") as {
   version: string;
@@ -50,6 +52,19 @@ withCommitOptions(
 withCommitOptions(
   program.command("push").description("Commit any pending work, then push"),
 ).action((opts) => push(opts));
+
+program
+  .command("connect")
+  .argument("<service>", "notion or sheets")
+  .description("Store integration credentials in GitHub Actions secrets")
+  .action((service: string) => connect(service));
+
+program
+  .command("sync")
+  .option("--since <ref>", "git ref to compare against", "HEAD~1")
+  .option("--dry-run", "list the rows that would be sent, send nothing")
+  .description("Send newly pushed log rows to enabled integrations")
+  .action((options: { since?: string; dryRun?: boolean }) => sync(options));
 
 const args = process.argv.slice(2)
 const manualIndex = args.indexOf("-am")

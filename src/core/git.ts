@@ -26,6 +26,16 @@ export function isRepo(root: string): boolean {
   return git(root, ["rev-parse", "--git-dir"]) !== null;
 }
 
+/**
+ * A revision resolved to its commit sha, or null when git cannot resolve it -
+ * an unfetched sha, the all-zero sha a first push reports, or a bare "".
+ */
+export function resolveRev(root: string, rev: string): string | null {
+  if (!rev.trim()) return null;
+  const sha = git(root, ["rev-parse", "--verify", "--quiet", `${rev}^{commit}`])?.trim();
+  return sha ? sha : null;
+}
+
 function countLines(file: string): number {
   try {
     const raw = fs.readFileSync(file, "utf8");

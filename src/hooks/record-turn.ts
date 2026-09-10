@@ -52,7 +52,7 @@ export async function recordTurn(
       removed: deltas.get(rel)?.removed ?? 0,
     }))
     const labels = classifyAll(relPaths, config.classify)
-    const { summary, why } = await new MechanicalSummarizer().summarize({
+    const { summary, goal, scope } = await new MechanicalSummarizer().summarize({
       labels,
       files,
       lastAssistantMessage,
@@ -63,11 +63,12 @@ export async function recordTurn(
     appendRow(logPath(root, config.logDir, author, at), {
       at,
       summary,
-      why,
+      goal,
       files,
       durationMs: state.promptStartedAt ? at.getTime() - state.promptStartedAt : -1,
       agent,
       author,
+      scope,
       status: "stage",
     })
     appendJSONL(p.queue, { date: dateKey(at), time: timeKey(at), files: relPaths })

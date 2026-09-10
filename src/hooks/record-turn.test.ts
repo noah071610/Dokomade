@@ -27,6 +27,33 @@ describe("recordTurn", () => {
     expect(await recordTurn(root, "codex", undefined, "test-recovery", Date.now())).toBe(true)
     const files = fs.readdirSync(path.join(root, "docs", "dokomade")).length
     expect(files).toBeGreaterThan(0)
+    const authorDir = fs.readdirSync(path.join(root, "docs", "dokomade"))[0]!
+    const logFile = fs.readdirSync(path.join(root, "docs", "dokomade", authorDir))[0]!
+    const log = fs.readFileSync(path.join(root, "docs", "dokomade", authorDir, logFile), "utf8")
+    expect(log).toContain("| Time | Task | Goal | Files | Duration | AI | Scope | Status | Author | Date |")
+    expect(log).toContain("| Etc | stage |")
+  })
+
+  it("records the AI scope for every project type", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "dokomade-"))
+    execFileSync("git", ["init", "-q", root])
+    fs.mkdirSync(path.join(root, "apps", "web"), { recursive: true })
+    fs.writeFileSync(path.join(root, "apps", "web", "page.tsx"), "export const page = true;\n")
+    writeJSON(paths(root).config, {
+      projectType: "fullstack",
+      classify: {
+        frontend: { pageDirs: ["apps/web"], sharedDirs: [] },
+        backend: { routeDirs: ["apps/api"] },
+      },
+    })
+    writeJSON(paths(root).state, { promptStartedAt: Date.now() - 1000 })
+
+    expect(await recordTurn(root, "codex", undefined, "test-fullstack", Date.now())).toBe(true)
+    const authorDir = fs.readdirSync(path.join(root, "docs", "dokomade"))[0]!
+    const logFile = fs.readdirSync(path.join(root, "docs", "dokomade", authorDir))[0]!
+    const log = fs.readFileSync(path.join(root, "docs", "dokomade", authorDir, logFile), "utf8")
+    expect(log).toContain("| Time | Task | Goal | Files | Duration | AI | Scope | Status | Author | Date |")
+    expect(log).toContain("| Etc | stage |")
   })
 
   it("ignores pending paths outside the project", async () => {

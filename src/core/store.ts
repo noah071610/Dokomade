@@ -123,6 +123,7 @@ export interface Config {
   projectType: ProjectType
   classify: ClassifyConfig
   commit: CommitConfig
+  integrations: { notion: boolean; sheets: boolean }
 }
 
 export const DEFAULT_COMMIT: CommitConfig = {
@@ -146,6 +147,7 @@ export const DEFAULT_CONFIG: Config = {
     },
   },
   commit: DEFAULT_COMMIT,
+  integrations: { notion: false, sheets: false },
 }
 
 export function paths(root: string): Paths {
@@ -187,21 +189,40 @@ export function repoRelativePath(root: string, target: string): string | null {
 }
 
 /**
- * Nearest ancestor of `from` holding a `.dokomade/` directory, else null.
+ * Outermost ancestor of `from` holding a `.dokomade/` directory, else null.
  *
- * The walk stops at the repository root and never leaves the home directory:
- * a stray `dokomade init` in `~` must not silently capture every project
- * underneath it.
+ * Outermost, not nearest: an init left behind in a subfolder (a frontend set
+ * up on its own, later wrapped in a top-level package that was set up too)
+ * would otherwise split one session's logs by whichever folder the agent last
+ * `cd`-ed into. The top-level init wins, even when the subfolder kept its own
+ * `.git`.
+ *
+ * Past a repository boundary only a folder with a `package.json` may claim the
+ * logs: a stray `dokomade init` in a plain folder like `~/Projects` must not
+ * silently capture every project underneath it. The walk never leaves the
+ * home directory, and a repo that was never initialised is never captured.
  */
 export function findRoot(from: string): string | null {
   const home = os.homedir()
   let cur = path.resolve(from)
+  let found: string | null = null
+  let crossedRepo = false
   for (;;) {
-    if (fs.existsSync(path.join(cur, STATE_DIR))) return cur
-    // A project boundary with no .dokomade/ means dokomade is not set up here.
-    if (fs.existsSync(path.join(cur, ".git"))) return null
+    if (
+      // Home never overrides a project below it.
+      !(found && cur === home) &&
+      fs.existsSync(path.join(cur, STATE_DIR)) &&
+      (!crossedRepo || fs.existsSync(path.join(cur, "package.json")))
+    ) {
+      found = cur
+    }
+    if (fs.existsSync(path.join(cur, ".git"))) {
+      // A repo with no init of its own is not ours, whatever sits above it.
+      if (!found) return null
+      crossedRepo = true
+    }
     const parent = path.dirname(cur)
-    if (parent === cur || cur === home) return null
+    if (parent === cur || cur === home) return found
     cur = parent
   }
 }
@@ -216,6 +237,43 @@ export function guessRoot(from: string): string {
     if (parent === cur) return path.resolve(from)
     cur = parent
   }
+}
+
+/**
+ * Where `init` puts the logs: next to the one package.json that installs
+ * dokomade, so a lone `apps/web` install logs under `apps/web/docs/dokomade`.
+ *
+ * Anything ambiguous - installs in two packages, an install at the root, or a
+ * leftover `.dokomade/` from an init in a subfolder - gets the top-level
+ * `docs/dokomade`, so a double init never splits the logs.
+ */
+export function defaultLogDir(root: string): string {
+  const installs: string[] = []
+  let nestedInit = false
+  const lists = (deps: unknown): boolean => typeof deps === "object" && deps !== null && "dokomade" in deps
+  // ponytail: depth 4 covers apps/web and packages/@scope/pkg; deeper installs get the top-level default
+  const walk = (dir: string, depth: number): void => {
+    if (dir !== root && fs.existsSync(path.join(dir, STATE_DIR))) nestedInit = true
+    const pkg = readJSON<Record<string, unknown> | null>(path.join(dir, "package.json"), null)
+    if (pkg && (lists(pkg.dependencies) || lists(pkg.devDependencies))) installs.push(dir)
+    if (depth === 0) return
+    let entries: fs.Dirent[]
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules") {
+        walk(path.join(dir, entry.name), depth - 1)
+      }
+    }
+  }
+  walk(root, 4)
+
+  const only = installs.length === 1 && !nestedInit ? installs[0] : undefined
+  if (!only || only === root) return DEFAULT_CONFIG.logDir
+  return `${path.relative(root, only).split(path.sep).join("/")}/${DEFAULT_CONFIG.logDir}`
 }
 
 export function readJSON<T>(file: string, fallback: T): T {
@@ -355,59 +413,16 @@ export function readConfig(p: Paths): Config {
       // rows" on a repo full of them.
       windowDays: Math.max(1, Number(raw.commit?.windowDays) || DEFAULT_COMMIT.windowDays),
     },
-  }
-}
-
-/**
- * Write config.json with its options annotated in place.
- *
- * Hand-rolled rather than `JSON.stringify`, because the file is the only
- * documentation most users will read: every key gets the one line that says
- * what changing it does. Comments are `//` line comments - `readConfig` strips
- * them, and every editor already highlights the file as JSONC.
- */
-export function writeConfig(p: Paths, config: Config): void {
-  const j = (v: unknown): string => JSON.stringify(v)
-  writeText(
-    p.config,
-    `{
-  // Where work logs are written: <logDir>/<author>/<YYYY-MM-DD>.md
-  "logDir": ${j(config.logDir)},
-
-  // frontend | backend | fullstack | library - decides how changed files are classified.
-  "projectType": ${j(config.projectType)},
-
-  // Repo-relative directories the classifier matches changed paths against.
-  "classify": {
-    "frontend": {
-      // Pages and route entry points; an edit here is logged as a page change.
-      "pageDirs": ${j(config.classify.frontend.pageDirs)},
-      // Components and helpers shared across pages.
-      "sharedDirs": ${j(config.classify.frontend.sharedDirs)}
+    integrations: {
+      ...DEFAULT_CONFIG.integrations,
+      notion: raw.integrations?.notion === true,
+      sheets: raw.integrations?.sheets === true,
     },
-    "backend": {
-      // API route handlers; edits here are grouped per REST domain.
-      "routeDirs": ${j(config.classify.backend.routeDirs)}
-    }
-  },
-
-  "commit": {
-    // Days of log files \`dokomade commit\` scans for staged rows. Minimum 1.
-    "windowDays": ${j(config.commit.windowDays)},
-    // Conventional Commits reference, relative to the repo root.
-    "convention": ${j(config.commit.convention)},
-    // CLI that writes the message when committing from a bare terminal:
-    // claude | codex | cursor | gemini | none ("none" prints the brief instead).
-    "ai": ${j(config.commit.ai)},
-    // Set once the CLI above has been chosen; false makes commit ask again.
-    "aiConfigured": ${j(config.commit.aiConfigured)},
-    // Spend tokens describing changed files that have no log row. Off by
-    // default: what survives the noise filter is usually nothing.
-    "analyzeOrphans": ${j(config.commit.analyzeOrphans)}
   }
 }
-`,
-  )
+
+export function writeConfig(p: Paths, config: Config): void {
+  writeJSON(p.config, config)
 }
 
 /** Hook wall time, for the §13 "measure before choosing a launcher" decision. */

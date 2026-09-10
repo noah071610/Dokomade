@@ -10,8 +10,9 @@ Master.md
 .dokomade/queue.jsonl
 .dokomade/perf.jsonl
 docs/*
-# dokomade logs are runtime bookkeeping.
+# The logs are the input `dokomade sync` diffs; they have to be committed.
 docs/dokomade
 
 *.tgz
 dist
+.env

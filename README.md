@@ -23,7 +23,38 @@ That's it. The agent reads the setup section at the bottom, picks the right proj
 | `dokomade commit` / `dokomade push` with no pending work | **0** |
 | `dokomade commit` / `dokomade push` with pending work   | 1 extra AI call (~60k in / 700 out) |
 
-Logs land in `docs/dokomade/<github_name_lowercase_with_underscores>/<YYYY-MM-DD>.md`.
+Logs land in `docs/dokomade/<github_name_lowercase_with_underscores>/<YYYY-MM-DD>.md`, next to the
+`package.json` that installs dokomade. If more than one package installs it (a monorepo with both
+frontend and backend set up), they land at the top level instead.
+
+## Optional integrations
+
+Notion and Google Sheets sync run only for rows added by a push. Credentials are
+stored in GitHub Actions secrets, not in the repository or local files.
+
+```bash
+npx dokomade connect notion   # stores the secrets, writes the sync workflow
+git add .github/workflows/dokomade-sync.yml && git commit -m "ci: dokomade sync"
+```
+
+`connect` writes `.github/workflows/dokomade-sync.yml`. **Commit and push it** -
+after that every push that adds log rows syncs them by itself, with no further
+command. `npx dokomade sync` stays available for a manual run.
+
+Required secrets are `DOKOMADE_NOTION_TOKEN`, `DOKOMADE_NOTION_DB`,
+`DOKOMADE_SHEETS_KEY`, and `DOKOMADE_SHEETS_ID`. Run `connect` yourself after
+authenticating GitHub CLI; it sends values directly to `gh secret set`.
+
+If the project has no GitHub repository, `connect` offers a local fallback. If
+you accept, it writes shell-compatible `export` entries to `.env`, restricts
+the file to your user, and adds `.env` to `.gitignore`. The local file is read
+for terminal syncs, but never commit or share it. A Git repository is still
+required for `sync` to identify which log rows are new.
+
+`dokomade push` also syncs from your own terminal when those variables are set
+in the shell - handy while setting the integration up, since the result comes
+back immediately instead of a minute later in Actions. With none of them set it
+stays quiet and leaves the job to the workflow.
 
 ---
 
@@ -44,11 +75,21 @@ Inspect the repo and pick exactly one:
 
 Signals: `next.config.*`/`app/api/` → fullstack. `package.json` `"bin"` or `"exports"` with no app entry → library. Only `src/routes`, `controllers/`, `Dockerfile`, no UI deps → backend. React/Vue deps with no server dir → frontend.
 
-## Step 2 - Run init non-interactively
+## Step 2 - Install, then run init non-interactively
+
+Install dokomade as a devDependency of the package it should log, then run init from inside that
+package. In a monorepo that is the workspace's own `package.json` (e.g. `apps/web`), not the root.
 
 ```bash
+npm i -D dokomade          # pnpm add -D dokomade / yarn add -D dokomade
 npx dokomade init --<project_type>
 ```
+
+Do not choose a log folder yourself - init decides it:
+
+- init sets itself up at the repo root (nearest `.git`), wherever inside the repo you run it.
+- Logs go to `docs/dokomade/` next to the one `package.json` that lists dokomade.
+- Two or more packages list it, the root lists it, or a subfolder was already initialised → logs go to the top-level `docs/dokomade/`.
 
 Fill in the type you chose:
 

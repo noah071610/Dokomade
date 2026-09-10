@@ -19,6 +19,7 @@ import { availableClis } from "../core/ai.js"
 import {
   DEFAULT_COMMIT,
   DEFAULT_CONFIG,
+  defaultLogDir,
   guessRoot,
   paths,
   readConfig,
@@ -30,6 +31,7 @@ import {
   type Paths,
   type ProjectType,
 } from "../core/store.js"
+import { WORKFLOW_FILE, writeWorkflow } from "../core/workflow.js"
 
 const HOOK_FILES = {
   UserPromptSubmit: "on-prompt.js",
@@ -62,6 +64,7 @@ const GITIGNORE_ENTRIES = [
   ".claude",
   ".codex",
   ".cursor",
+  ".env",
   ".dokomade/state.json",
   ".dokomade/pending.jsonl",
   ".dokomade/queue.jsonl",
@@ -135,6 +138,13 @@ const PROJECT_TYPES: SelectItem<ProjectType>[] = [
     description: "AI plugins, npm libraries, VS Code/Chrome extensions",
   },
 ]
+
+const INTEGRATIONS: SelectItem<"Notion" | "Google Sheets">[] = [
+  { label: "Notion", value: "Notion", description: "Sync work logs to a Notion database" },
+  { label: "Google Sheets", value: "Google Sheets", description: "Append work logs to a spreadsheet" },
+]
+
+type IntegrationId = (typeof INTEGRATIONS)[number]["value"]
 
 async function confirmPrompt(question: string, defaultValue: boolean): Promise<boolean> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
@@ -320,6 +330,17 @@ async function selectRootFolders(root: string, title: string): Promise<string[]>
   return selected.map((i) => folders[i]).filter((folder): folder is string => Boolean(folder))
 }
 
+async function selectIntegrations(): Promise<Set<IntegrationId>> {
+  if (await confirmPrompt("Skip API integrations?", true)) return new Set()
+  const selected = await selectPrompt({
+    title: "Select API integrations",
+    hint: "(Use Space to toggle, Enter to confirm)",
+    items: INTEGRATIONS,
+    multi: true,
+  })
+  return new Set(selected.map((i) => INTEGRATIONS[i]?.value).filter((value): value is IntegrationId => Boolean(value)))
+}
+
 /**
  * Which CLI `dokomade commit` may fall back to from a bare terminal.
  *
@@ -379,6 +400,8 @@ async function setupConfig(root: string, preset?: ProjectType): Promise<Config> 
     folders.routeDirs = preset ? ["."] : await selectRootFolders(root, "Select backend route folders")
   }
 
+  const selectedIntegrations = await selectIntegrations()
+
   return {
     ...DEFAULT_CONFIG,
     commit: { ...DEFAULT_COMMIT },
@@ -386,6 +409,10 @@ async function setupConfig(root: string, preset?: ProjectType): Promise<Config> 
     classify: {
       frontend: { pageDirs: folders.pageDirs, sharedDirs: [] },
       backend: { routeDirs: folders.routeDirs },
+    },
+    integrations: {
+      notion: selectedIntegrations.has("Notion"),
+      sheets: selectedIntegrations.has("Google Sheets"),
     },
   }
 }
@@ -493,9 +520,14 @@ export async function init(cwd: string = process.cwd(), projectType?: ProjectTyp
   const existing = readConfig(p)
   const wiped = await resetLogs(root, existing.logDir, p)
   const configured = await setupConfig(root, projectType)
+  // A logDir init picked itself is re-picked, so installing into a second
+  // package and re-running init moves new logs to the top level. A hand-set one stays.
+  const picked =
+    existing.logDir === DEFAULT_CONFIG.logDir || existing.logDir.endsWith(`/${DEFAULT_CONFIG.logDir}`)
   const config: Config = {
     ...configured,
-    logDir: existing.logDir,
+    logDir: picked ? defaultLogDir(root) : existing.logDir,
+    integrations: existing.integrations ?? configured.integrations,
     commit: {
       ...configured.commit,
       ai: existing.commit.ai,
@@ -503,6 +535,11 @@ export async function init(cwd: string = process.cwd(), projectType?: ProjectTyp
     },
   }
   writeConfig(p, config)
+
+  // The sync workflow is generated, never hand-edited, so an existing copy is
+  // stale rather than customised - refresh it whenever an integration is on.
+  const syncing = config.integrations.notion || config.integrations.sheets
+  if (syncing) writeWorkflow(root, config.logDir)
 
   const settingsFile = path.join(root, ".claude", "settings.json")
   const settings = readJSON<Settings>(settingsFile, {})
@@ -554,6 +591,18 @@ export async function init(cwd: string = process.cwd(), projectType?: ProjectTyp
   console.log(
     `  ${c.cyan}${fig.bullet}${c.reset} ${c.dim}project${c.reset}      ${c.bold}${config.projectType}${c.reset}`,
   )
+  const activeIntegrations = Object.entries(config.integrations)
+    .filter(([, enabled]) => enabled)
+    .map(([name]) => name)
+    .join(", ")
+  console.log(
+    `  ${c.cyan}${fig.bullet}${c.reset} ${c.dim}integrations${c.reset} ${activeIntegrations || c.gray + "none" + c.reset}`,
+  )
+  if (syncing) {
+    console.log(
+      `  ${c.cyan}${fig.bullet}${c.reset} ${c.dim}sync${c.reset}         ${WORKFLOW_FILE} ${c.gray}(runs on push; add secrets with \`npx dokomade connect <service>\`)${c.reset}`,
+    )
+  }
   console.log(
     `  ${c.cyan}${fig.bullet}${c.reset} ${c.dim}logs${c.reset}         ${config.logDir}/<author>/<YYYY-MM-DD>.md`,
   )

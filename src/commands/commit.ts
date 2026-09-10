@@ -20,6 +20,7 @@ import path from "node:path"
 import readline from "node:readline/promises"
 import { CLOSE_MARK, OPEN_MARK, availableClis, runAi } from "../core/ai.js"
 import { report } from "../core/banner.js"
+import { loadEnvFile, notionEnv, sheetsEnv } from "../core/env.js"
 import {
   authorName,
   currentBranch,
@@ -27,6 +28,7 @@ import {
   hasUpstream,
   isRepo,
   lineDeltas,
+  resolveRev,
   stagedDiff,
   stagedFiles,
 } from "../core/git.js"
@@ -52,6 +54,7 @@ import {
   type QueueEntry,
 } from "../core/store.js"
 import { selectAiCli } from "./init.js"
+import { sync } from "./sync.js"
 
 export interface CommitOptions {
   manualMessage?: string
@@ -103,7 +106,7 @@ const FALLBACK_CONVENTION = [
   "type: feat | fix | docs | style | refactor | test | chore | perf",
   "subject: start lowercase, no period, imperative verb, 50 characters max",
   "scope: optional. affected module/area",
-  "body: why it changed. Omit if self-explanatory",
+  "body: goal of the change. Omit if self-explanatory",
 ].join("\n")
 
 function conventionText(root: string, config: Config): string {
@@ -229,6 +232,7 @@ function writeOrphanRow(root: string, config: Config, orphans: string[], title: 
     durationMs: -1,
     agent: config.commit.ai === "none" ? undefined : config.commit.ai,
     author,
+    scope: "Etc",
     status: "stage",
   })
   return file
@@ -515,6 +519,28 @@ export async function commit(opts: CommitOptions, cwd: string = process.cwd(), s
   return true
 }
 
+/**
+ * Send the rows this push added, from the terminal, when the credentials are
+ * in this shell.
+ *
+ * Their normal home is GitHub Actions secrets and the generated workflow does
+ * the same thing on the runner - so a machine with none of them set stays
+ * silent instead of reporting a failure the push did not have. Every enabled
+ * integration must be configured before anything is sent: syncing half of
+ * them would turn a clean push into a red exit code.
+ */
+async function syncAfterPush(root: string, config: Config, before: string | null): Promise<void> {
+  const { notion, sheets } = config.integrations
+  if (!notion && !sheets) return
+  loadEnvFile(root)
+  if (notion && !notionEnv()) return
+  if (sheets && !sheetsEnv()) return
+  // `before` is the upstream sha read before the push, so the range is exactly
+  // the commits this push published - the same range the workflow gets from
+  // `github.event.before`.
+  await sync({ since: before ?? "HEAD~1" }, root)
+}
+
 export async function push(opts: CommitOptions, cwd: string = process.cwd()): Promise<void> {
   const root = findRoot(cwd)
   if (!root) {
@@ -544,6 +570,8 @@ export async function push(opts: CommitOptions, cwd: string = process.cwd()): Pr
   }
 
   const branch = currentBranch(root)
+  // Read before pushing: afterwards @{u} has already moved to the new head.
+  const before = resolveRev(root, "@{u}")
   const args = hasUpstream(root) ? ["push"] : branch ? ["push", "-u", "origin", branch] : ["push"]
   if (process.stdout.isTTY) {
     console.log(
@@ -567,4 +595,6 @@ export async function push(opts: CommitOptions, cwd: string = process.cwd()): Pr
     // Honest about step 6's cost rather than letting it look like a stray diff.
     notes: rows.length > 0 ? ["Log files were modified - they will be included in the next commit."] : [],
   })
+
+  await syncAfterPush(root, config, before)
 }

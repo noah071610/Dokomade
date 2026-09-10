@@ -4,7 +4,7 @@ import os from "node:os"
 import path from "node:path"
 import { describe, expect, it } from "vitest"
 import { CLOSE_MARK, extractMessage, OPEN_MARK } from "./ai.js"
-import { classify, classifyAll, SHARED_LABEL } from "./classify.js"
+import { classify, classifyAll, normalizeScope, SHARED_LABEL } from "./classify.js"
 import { authorName, changedSince } from "./git.js"
 import {
   appendRow,
@@ -12,6 +12,7 @@ import {
   formatFiles,
   formatRow,
   logPath,
+  parseSyncRow,
   recentLogFiles,
   rowsWithStatus,
   setStatus,
@@ -21,12 +22,28 @@ import {
   upgradeHeader,
   withStatus,
 } from "./markdown.js"
-import { DEFAULT_CONFIG, findRoot, paths, readConfig, repoRelativePath, writeConfig, writeJSON } from "./store.js"
+import {
+  DEFAULT_CONFIG,
+  defaultLogDir,
+  findRoot,
+  paths,
+  readConfig,
+  repoRelativePath,
+  writeConfig,
+  writeJSON,
+} from "./store.js"
 import { MechanicalSummarizer } from "./summarize.js"
 
 const cfg = DEFAULT_CONFIG.classify
 
 describe("classify", () => {
+  it("normalizes AI scope tokens and rejects arbitrary text", () => {
+    expect(normalizeScope("Backend, Frontend")).toBe("Frontend,Backend")
+    expect(normalizeScope("Frontend,Core")).toBe("Frontend,Core")
+    expect(normalizeScope("Etc,Frontend")).toBe("Etc")
+    expect(normalizeScope("Frontend work")).toBe("Etc")
+  })
+
   it("maps a frontend file to its page, not its component", () => {
     expect(classify("src/app/calculator/page.tsx", cfg)).toBe("calculator")
     expect(classify("src/app/calculator/bottom-sheet.tsx", cfg)).toBe("calculator")
@@ -62,6 +79,7 @@ describe("classify", () => {
       classifyAll(["src/api/users/route.ts", "src/app/calculator/page.tsx", "src/app/calculator/x.tsx"], cfg),
     ).toEqual(["calculator", "users"])
   })
+
 })
 
 describe("config", () => {
@@ -73,7 +91,7 @@ describe("config", () => {
     expect(readConfig(paths(root)).projectType).toBe("library")
   })
 
-  it("reads back a written config despite its comments", () => {
+  it("writes and reads a strict JSON config", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "dkmd-config-"))
     const p = paths(root)
     const written = {
@@ -84,7 +102,7 @@ describe("config", () => {
     }
     writeConfig(p, written)
 
-    expect(fs.readFileSync(p.config, "utf8")).toContain("// Where work logs are written")
+    expect(() => JSON.parse(fs.readFileSync(p.config, "utf8"))).not.toThrow()
     expect(readConfig(p)).toEqual(written)
   })
 
@@ -127,18 +145,42 @@ describe("markdown", () => {
       durationMs: 4 * 60_000,
       author: "noah",
     })
-    expect(row).toBe("| 14:11 | a \\| b | `x.ts` +1/-0 | 4m | - | noah | stage |")
-    // Cell delimiters are the unescaped pipes: 7 columns -> 8 delimiters.
-    expect(row.replace(/\\\|/g, "").split("|").length - 1).toBe(8)
-    // An escaped pipe must not shift Status into the Author slot.
-    expect(splitCells(row)).toHaveLength(7)
+    expect(row).toBe("| 14:11 | a \\| b |  | `x.ts` +1/-0 | 4m | - | Etc | stage | noah | 2026-09-06T14:11:00 |")
+    // Cell delimiters are the unescaped pipes: 10 columns -> 11 delimiters.
+    expect(row.replace(/\\\|/g, "").split("|").length - 1).toBe(11)
+    // An escaped pipe must not shift Status or Author into the wrong slot.
+    expect(splitCells(row)).toHaveLength(10)
     expect(statusOf(row)).toBe("stage")
+  })
+
+  it("separates Goal and keeps Author immediately before Date", () => {
+    const row = formatRow({
+      at: new Date(2026, 8, 6, 14, 11),
+      summary: "API and page",
+      files: [],
+      durationMs: -1,
+      author: "noah",
+      scope: "Frontend,Backend",
+    })
+    expect(splitCells(row)).toEqual([
+      "14:11",
+      "API and page",
+      "",
+      "-",
+      "-",
+      "-",
+      "Frontend,Backend",
+      "stage",
+      "noah",
+      "2026-09-06T14:11:00",
+    ])
+    expect(parseSyncRow(row, "docs/dokomade/noah/2026-09-06.md")?.scope).toBe("Frontend,Backend")
   })
 })
 
 describe("MechanicalSummarizer", () => {
   const s = new MechanicalSummarizer()
-  // Most cases only care about the first line; `why` has its own tests below.
+  // Most cases only care about the first line; `goal` has its own tests below.
   const title = async (input: Parameters<typeof s.summarize>[0]): Promise<string> =>
     (await s.summarize(input)).summary
 
@@ -162,23 +204,50 @@ describe("MechanicalSummarizer", () => {
     ).toBe("로그인 폼 검증 추가")
   })
 
-  it("keeps why as its own line", async () => {
+  it("keeps goal as its own line", async () => {
     expect(
       await s.summarize({
         labels: [],
         files: [],
-        lastAssistantMessage: "[summary] init --default 플래그 추가\n[why] CI에서 대화형 프롬프트 없이 초기화하려고",
+        lastAssistantMessage: "[summary] init --default 플래그 추가\n[goal] CI에서 대화형 프롬프트 없이 초기화하려고\n[scope] Core",
       }),
-    ).toEqual({ summary: "init --default 플래그 추가", why: "CI에서 대화형 프롬프트 없이 초기화하려고" })
+    ).toEqual({ summary: "init --default 플래그 추가", goal: "CI에서 대화형 프롬프트 없이 초기화하려고", scope: "Core" })
   })
 
-  it("leaves why absent when the reply only tagged a title", async () => {
+  it("leaves goal absent when the reply only tagged a title", async () => {
     expect(
       await s.summarize({ labels: [], files: [], lastAssistantMessage: "[summary] 로그인 폼 검증 추가" }),
-    ).toEqual({ summary: "로그인 폼 검증 추가", why: undefined })
+    ).toEqual({ summary: "로그인 폼 검증 추가", goal: undefined, scope: "Etc" })
   })
 
-  it("never invents a why for an untagged turn", async () => {
+  it("keeps a detailed title whole rather than cutting it at 40", async () => {
+    const detailed = "Notion 연동의 Lines·AI 속성 타입을 텍스트와 셀렉트로 되돌리고 전송 간격 추가"
+    expect(await title({ labels: [], files: [], lastAssistantMessage: `[summary] ${detailed}` })).toBe(detailed)
+  })
+
+  it("cuts a title that overshoots the ceiling", async () => {
+    const summary = await title({
+      labels: [],
+      files: [],
+      lastAssistantMessage: `[summary] ${"가".repeat(150)}`,
+    })
+    expect(summary).toHaveLength(100)
+    expect(summary.endsWith("…")).toBe(true)
+  })
+
+  it("never leaves a <br> in the cell, since it is the Task separator", async () => {
+    expect(
+      await title({ labels: [], files: [], lastAssistantMessage: "[summary] 훅 등록<br>경로 정리" }),
+    ).toBe("훅 등록 경로 정리")
+  })
+
+  it("never leaves a newline in the cell", async () => {
+    expect(
+      await title({ labels: [], files: [], lastAssistantMessage: "[summary] 훅 등록\n경로 정리" }),
+    ).not.toContain("\n")
+  })
+
+  it("never invents a goal for an untagged turn", async () => {
     // The fallbacks guess at what changed; a motive cannot be guessed at all.
     expect(
       await s.summarize({
@@ -186,7 +255,7 @@ describe("MechanicalSummarizer", () => {
         files: [{ path: "src/auth/login.ts", added: 1, removed: 0 }],
         lastAssistantMessage: "고쳤습니다.",
       }),
-    ).toEqual({ summary: "login 변경" })
+    ).toEqual({ summary: "login 변경", scope: "Etc" })
   })
 
   it("falls back to what the assistant said, stripped of markdown", async () => {
@@ -273,6 +342,66 @@ describe("findRoot boundaries", () => {
     // .dokomade must not capture it.
     expect(findRoot(path.join(outer, "inner/src"))).toBeNull()
   })
+
+  it("prefers the top-level init over one left behind in a subfolder", () => {
+    // frontend initialised first, then wrapped in a parent that was initialised too
+    const parent = mk("frontend", "src")
+    fs.mkdirSync(path.join(parent, ".dokomade"))
+    fs.mkdirSync(path.join(parent, "frontend", ".dokomade"))
+    expect(fs.realpathSync(findRoot(path.join(parent, "frontend/src"))!)).toBe(fs.realpathSync(parent))
+
+    // ...even when the frontend kept its own repo
+    fs.mkdirSync(path.join(parent, "frontend", ".git"))
+    fs.writeFileSync(path.join(parent, "package.json"), "{}")
+    expect(fs.realpathSync(findRoot(path.join(parent, "frontend/src"))!)).toBe(fs.realpathSync(parent))
+  })
+
+  it("does not let a stray init in a plain folder capture a repo below it", () => {
+    const projects = mk("app", "src")
+    fs.mkdirSync(path.join(projects, ".dokomade"))
+    fs.mkdirSync(path.join(projects, "app", ".dokomade"))
+    fs.mkdirSync(path.join(projects, "app", ".git"))
+    // `projects` has no package.json: it is a folder of repos, not a package.
+    expect(fs.realpathSync(findRoot(path.join(projects, "app/src"))!)).toBe(
+      fs.realpathSync(path.join(projects, "app")),
+    )
+  })
+})
+
+describe("defaultLogDir", () => {
+  const pkg = (dir: string, deps: Record<string, string> = {}): void => {
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ devDependencies: deps }))
+  }
+  const mono = (): string => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "dkmd-logdir-"))
+    pkg(root)
+    pkg(path.join(root, "apps/web"), { dokomade: "1.0.0" })
+    pkg(path.join(root, "apps/api"))
+    // an installed copy under node_modules is not a package that installs dokomade
+    pkg(path.join(root, "node_modules/some-dep"), { dokomade: "1.0.0" })
+    return root
+  }
+
+  it("logs next to the only package that installs dokomade", () => {
+    expect(defaultLogDir(mono())).toBe("apps/web/docs/dokomade")
+  })
+
+  it("falls back to the top level when installs are ambiguous", () => {
+    const two = mono()
+    pkg(path.join(two, "apps/api"), { dokomade: "1.0.0" })
+    expect(defaultLogDir(two)).toBe("docs/dokomade")
+
+    const atRoot = mono()
+    pkg(atRoot, { dokomade: "1.0.0" })
+    expect(defaultLogDir(atRoot)).toBe("docs/dokomade")
+
+    const leftover = mono()
+    fs.mkdirSync(path.join(leftover, "apps/web/.dokomade"))
+    expect(defaultLogDir(leftover)).toBe("docs/dokomade")
+
+    expect(defaultLogDir(fs.mkdtempSync(path.join(os.tmpdir(), "dkmd-logdir-")))).toBe("docs/dokomade")
+  })
 })
 
 describe("repoRelativePath", () => {
@@ -343,7 +472,7 @@ describe("status column", () => {
 
   it("opens the AI gap on a legacy row rather than overwriting Author", () => {
     const row = withStatus("| 14:00 | a | - | 2m | noah |", "commit")
-    expect(splitCells(row)).toEqual(["14:00", "a", "-", "2m", "-", "noah", "commit"])
+    expect(splitCells(row)).toEqual(["14:00", "a", "", "-", "2m", "", "", "commit", "noah", ""])
   })
 
   it("replaces an outdated header and widens the rows under it", () => {
@@ -362,11 +491,41 @@ describe("status column", () => {
     )
     upgradeHeader(file)
     const lines = fs.readFileSync(file, "utf8").split("\n")
-    expect(splitCells(lines[3] as string)).toHaveLength(7)
+    expect(splitCells(lines[3] as string)).toHaveLength(10)
     // A header is labels, not data: an old or hand-renamed one is replaced.
-    expect(splitCells(lines[2] as string)).toEqual(["Time", "Task", "Files", "Duration", "AI", "Author", "Status"])
-    // The row is data, so it is only widened: noah stays in Author.
-    expect(splitCells(lines[4] as string)).toEqual(["14:00", "a", "-", "2m", "-", "noah", ""])
+    expect(splitCells(lines[2] as string)).toEqual(["Time", "Task", "Goal", "Files", "Duration", "AI", "Scope", "Status", "Author", "Date"])
+    // The row is migrated too, so noah stays in Author immediately before Date.
+    expect(splitCells(lines[4] as string)).toEqual(["14:00", "a", "", "-", "2m", "", "", "", "noah", ""])
+  })
+
+  it("splits a previous combined Task row while moving Author before Date", () => {
+    const root = tmp()
+    const file = path.join(root, "2026-09-07.md")
+    fs.writeFileSync(
+      file,
+      [
+        "# 2026-09-07 - noah",
+        "",
+        "| Time | Task | Files | Duration | AI | Author | Scope | Status | Date |",
+        "| ---- | ---- | ----- | -------- | -- | ------ | ----- | ------ | ---- |",
+        "| 14:00 | summary<br>goal | - | 2m | codex | noah | Core | commit | 2026-09-07T14:00:00 |",
+        "",
+      ].join("\n"),
+    )
+    upgradeHeader(file)
+    const row = fs.readFileSync(file, "utf8").split("\n")[4] as string
+    expect(splitCells(row)).toEqual([
+      "14:00",
+      "summary",
+      "goal",
+      "-",
+      "2m",
+      "codex",
+      "Core",
+      "commit",
+      "noah",
+      "2026-09-07T14:00:00",
+    ])
   })
 
   it("moves only the rows in the requested state, and reports the count", () => {
@@ -394,6 +553,27 @@ describe("status column", () => {
     const at = new Date(2026, 8, 7, 14, 0)
     appendRow(file, { at, summary: "a | b", files: [], durationMs: -1, author: "noah" })
     expect(rowsWithStatus([file], "stage")[0]?.summary).toBe("a | b")
+  })
+
+  it("writes summary and goal as separate cells", () => {
+    const root = tmp()
+    const file = path.join(root, "2026-09-07.md")
+    const at = new Date(2026, 8, 7, 14, 0)
+    appendRow(file, {
+      at,
+      summary: "훅 등록<br>경로 정리",
+      goal: "CI에서<br>깨져서",
+      files: [],
+      durationMs: -1,
+      author: "noah",
+    })
+
+    const row = fs.readFileSync(file, "utf8").split("\n").find((l) => l.includes("훅 등록")) as string
+    expect(row).not.toContain("<br>")
+
+    const parsed = parseSyncRow(row, file)
+    expect(parsed?.summary).toBe("훅 등록 경로 정리")
+    expect(parsed?.goal).toBe("CI에서 깨져서")
   })
 
   it("scans the window, not just today, so an overnight row is still found", () => {

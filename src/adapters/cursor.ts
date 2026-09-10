@@ -10,7 +10,7 @@
  *
  * Title generation stays per-tool by design. Cursor's `beforeSubmitPrompt`
  * has no context-injection channel (its only output fields are `continue` and
- * `user_message`), so the `[summary]` / `[why]` request is never sent here and
+ * `user_message`), so the `[summary]` / `[goal]` / `[scope]` request is never sent here and
  * `stop` carries no assistant message. Rows written from Cursor fall back to
  * the prompt text, which MechanicalSummarizer already handles.
  */

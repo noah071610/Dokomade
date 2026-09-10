@@ -11,6 +11,18 @@ import type { ClassifyConfig } from "./store.js";
 
 export const SHARED_LABEL = "common";
 
+export const SCOPE_TOKENS = ["Frontend", "Backend", "Core", "Etc"] as const;
+export type WorkScope = string;
+
+export function normalizeScope(value: string): WorkScope {
+  const tokens = value.split(",").map((token) => token.trim()).filter(Boolean)
+  if (tokens.length === 0 || tokens.some((token) => !SCOPE_TOKENS.includes(token as (typeof SCOPE_TOKENS)[number]))) {
+    return "Etc"
+  }
+  if (tokens.includes("Etc")) return "Etc"
+  return SCOPE_TOKENS.filter((token) => token !== "Etc" && tokens.includes(token)).join(",") || "Etc"
+}
+
 const toPosix = (p: string): string => p.split(path.sep).join("/").replace(/^\.\//, "");
 
 /** First path segment under `dir`, with any file extension stripped. */
