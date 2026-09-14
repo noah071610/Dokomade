@@ -57,15 +57,17 @@ withCommitOptions(
 program
   .command("connect")
   .argument("<service>", "notion or sheets")
-  .description("Store integration credentials in GitHub Actions secrets")
+  .description("Configure Notion or Google Sheets sync")
   .action((service: string) => connect(service));
 
 program
   .command("sync")
-  .option("--since <ref>", "git ref to compare against", "HEAD~1")
+  .option("--all-authors", "sync every checked-in author log")
   .option("--dry-run", "list the rows that would be sent, send nothing")
-  .description("Send newly pushed log rows to enabled integrations")
-  .action((options: { since?: string; dryRun?: boolean }) => sync(options));
+  .description("Send unpushed log rows to enabled integrations")
+  .action(async (options: { allAuthors?: boolean; dryRun?: boolean }) => {
+    await sync(options)
+  });
 
 const args = process.argv.slice(2)
 const manualIndex = args.indexOf("-am")

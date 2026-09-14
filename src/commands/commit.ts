@@ -20,7 +20,7 @@ import path from "node:path"
 import readline from "node:readline/promises"
 import { CLOSE_MARK, OPEN_MARK, availableClis, runAi } from "../core/ai.js"
 import { report } from "../core/banner.js"
-import { loadEnvFile, notionEnv, sheetsEnv } from "../core/env.js"
+import { loadEnvFile } from "../core/env.js"
 import {
   authorName,
   changedFiles,
@@ -28,7 +28,7 @@ import {
   gitPassthrough,
   hasUpstream,
   lineDeltas,
-  resolveRev,
+  isGithubRepo,
   stagedDiff,
   stagedFiles,
 } from "../core/git.js"
@@ -36,6 +36,7 @@ import {
   appendRow,
   dateKey,
   logPath,
+  allLogFiles,
   recentLogFiles,
   rowsWithStatus,
   setStatus,
@@ -606,26 +607,17 @@ export async function commit(opts: CommitOptions, cwd: string = process.cwd(), s
 }
 
 /**
- * Send the rows this push added, from the terminal, when the credentials are
- * in this shell.
- *
- * Their normal home is GitHub Actions secrets and the generated workflow does
- * the same thing on the runner - so a machine with none of them set stays
- * silent instead of reporting a failure the push did not have. Every enabled
- * integration must be configured before anything is sent: syncing half of
- * them would turn a clean push into a red exit code.
+ * Send local rows only for non-GitHub remotes. GitHub repositories use the
+ * generated Actions workflow, avoiding a second delivery from the terminal.
  */
-async function syncAfterPush(root: string, config: Config, before: string | null, gitRoot = root): Promise<void> {
+async function syncAfterPush(root: string, config: Config, gitRoot = root): Promise<boolean> {
   const { notion, sheets } = config.integrations
-  if (!notion && !sheets) return
-  if (gitRoot !== root) return
+  if (!notion && !sheets) return true
+  if (gitRoot !== root) return true
+  // GitHub Actions가 push된 checkout을 읽으므로 로컬 인증값이 있으면 중복 전송된다.
+  if (isGithubRepo(root)) return true
   loadEnvFile(root)
-  if (notion && !notionEnv()) return
-  if (sheets && !sheetsEnv()) return
-  // `before` is the upstream sha read before the push, so the range is exactly
-  // the commits this push published - the same range the workflow gets from
-  // `github.event.before`.
-  await sync({ since: before ?? "HEAD~1" }, gitRoot)
+  return sync({}, gitRoot)
 }
 
 export async function push(opts: CommitOptions, cwd: string = process.cwd()): Promise<void> {
@@ -661,8 +653,6 @@ export async function push(opts: CommitOptions, cwd: string = process.cwd()): Pr
   }
 
   const branch = currentBranch(gitRoot)
-  // Read before pushing: afterwards @{u} has already moved to the new head.
-  const before = resolveRev(gitRoot, "@{u}")
   const args = hasUpstream(gitRoot) ? ["push"] : branch ? ["push", "-u", "origin", branch] : ["push"]
   if (process.stdout.isTTY) {
     console.log(
@@ -675,12 +665,10 @@ export async function push(opts: CommitOptions, cwd: string = process.cwd()): Pr
     return
   }
 
-  const logFiles = recentLogFiles(root, config.logDir, authorName(root), config.commit.windowDays)
+  const logFiles = allLogFiles(root, config.logDir, authorName(root))
   const includeRow = (row: ReturnType<typeof rowsWithStatus>[number]): boolean =>
     rowBelongsToRepo(row, root, gitRoot)
   const rows = rowsWithStatus(logFiles, "commit").filter(includeRow)
-  setStatus(logFiles, "commit", "push", includeRow)
-
   report({
     verb: "push",
     meta: [`${dateKey(new Date())} ${timeKey(new Date())}`, `${repository.name}:${branch || "-"}`, `${rows.length} rows`],
@@ -689,5 +677,5 @@ export async function push(opts: CommitOptions, cwd: string = process.cwd()): Pr
     notes: rows.length > 0 ? ["Log files were modified - they will be included in the next commit."] : [],
   })
 
-  await syncAfterPush(root, config, before, gitRoot)
+  if (await syncAfterPush(root, config, gitRoot)) setStatus(logFiles, "commit", "push", includeRow)
 }

@@ -16,6 +16,7 @@ import path from "node:path"
 import readline from "node:readline/promises"
 import { fileURLToPath } from "node:url"
 import { availableClis } from "../core/ai.js"
+import { isGithubRepo, isIgnored } from "../core/git.js"
 import {
   DEFAULT_COMMIT,
   DEFAULT_CONFIG,
@@ -530,19 +531,28 @@ export async function init(cwd: string = process.cwd(), projectType?: ProjectTyp
   const config: Config = {
     ...configured,
     logDir: picked ? defaultLogDir(root) : existing.logDir,
-    integrations: existing.integrations ?? configured.integrations,
+    integrations: fs.existsSync(p.config) ? existing.integrations : configured.integrations,
     commit: {
       ...configured.commit,
       ai: existing.commit.ai,
       aiConfigured: existing.commit.aiConfigured,
     },
   }
+  const github = isGithubRepo(root)
+  const syncing = config.integrations.notion || config.integrations.sheets
+  if (github && syncing && isIgnored(root, config.logDir)) {
+    console.error(
+      "\ninit: work logs are blocked by .gitignore. Remove that rule before enabling GitHub Actions integration.\n",
+    )
+    config.integrations = { notion: false, sheets: false }
+  }
   writeConfig(p, config)
 
-  // The sync workflow is generated, never hand-edited, so an existing copy is
-  // stale rather than customised - refresh it whenever an integration is on.
-  const syncing = config.integrations.notion || config.integrations.sheets
-  if (syncing) writeWorkflow(root, config.logDir)
+  // sync workflow는 자동 생성하며, GitHub만 원격 실행기로 사용하고 그 외
+  // 저장소는 로컬 .env에서 동기화한다.
+  if (github && (config.integrations.notion || config.integrations.sheets)) {
+    writeWorkflow(root, config.logDir)
+  }
 
   const settingsFile = path.join(root, ".claude", "settings.json")
   const settings = readJSON<Settings>(settingsFile, {})

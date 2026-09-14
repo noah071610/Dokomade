@@ -36,7 +36,7 @@ describe("resolveRev", () => {
 })
 
 describe("writeWorkflow", () => {
-  it("writes once, watches the configured log dir, and passes the pushed range", () => {
+  it("writes once and watches the configured log dir", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "dkmd-wfw-"))
     expect(writeWorkflow(root, "logs/work")).toBe(true)
     // Unchanged input must not report a change: `connect` tells the user to
@@ -45,8 +45,7 @@ describe("writeWorkflow", () => {
 
     const yaml = fs.readFileSync(path.join(root, WORKFLOW_FILE), "utf8")
     expect(yaml).toContain('- "logs/work/**"')
-    expect(yaml).toContain("fetch-depth: 0")
-    expect(yaml).toContain('sync --since "${{ github.event.before }}"')
+    expect(yaml).toContain("dokomade@latest sync --all-authors")
     expect(yaml).toContain("DOKOMADE_NOTION_TOKEN: ${{ secrets.DOKOMADE_NOTION_TOKEN }}")
 
     expect(writeWorkflow(root, "docs/dokomade")).toBe(true)

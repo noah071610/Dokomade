@@ -305,6 +305,24 @@ export function parseSyncRow(line: string, file: string): SyncRow | null {
   }
 }
 
+/** push 상태가 아닌 모든 행을 읽는다. */
+export function rowsToSync(files: string[]): SyncRow[] {
+  const rows: SyncRow[] = []
+  for (const file of files) {
+    let raw: string
+    try {
+      raw = fs.readFileSync(file, "utf8")
+    } catch {
+      continue
+    }
+    for (const line of raw.split("\n")) {
+      const row = parseSyncRow(line, file)
+      if (row && row.status !== "push") rows.push(row)
+    }
+  }
+  return rows
+}
+
 export function totalDelta(files: readonly FileChange[]): LineDelta {
   return files.reduce(
     (total, file) => ({ added: total.added + file.added, removed: total.removed + file.removed }),
@@ -386,6 +404,53 @@ export function recentLogFiles(
     }
   }
   return out
+}
+
+/** 한 사용자의 날짜별 로그를 오래된 순서로 모두 반환한다. */
+export function allLogFiles(root: string, logDir: string, author: string): string[] {
+  const sample = new Date(0)
+  const dirs = new Set([
+    path.dirname(logPath(root, logDir, author, sample)),
+    path.dirname(legacyLogPath(root, logDir, author, sample)),
+  ])
+  const files = new Map<string, string>()
+  for (const dir of dirs) {
+    let actualDir: string
+    try {
+      actualDir = fs.realpathSync(dir)
+    } catch {
+      continue
+    }
+    let entries: fs.Dirent[]
+    try {
+      entries = fs.readdirSync(actualDir, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      if (entry.isFile() && /^\d{4}-\d{2}-\d{2}\.md$/.test(entry.name)) {
+        const file = path.join(actualDir, entry.name)
+        files.set(file.toLowerCase(), file)
+      }
+    }
+  }
+  return [...files.values()].sort()
+}
+
+/** 모든 사용자 디렉터리의 날짜별 로그를 오래된 순서로 반환한다. */
+export function allAuthorLogFiles(root: string, logDir: string): string[] {
+  const base = path.join(root, safeRelativePath(logDir, "docs/dokomade"))
+  let entries: fs.Dirent[]
+  try {
+    entries = fs.readdirSync(base, { withFileTypes: true })
+  } catch {
+    return []
+  }
+  const files = new Map<string, string>()
+  for (const entry of entries.filter((item) => item.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))) {
+    for (const file of allLogFiles(root, logDir, entry.name)) files.set(file.toLowerCase(), file)
+  }
+  return [...files.values()].sort()
 }
 
 export interface StatusChange {

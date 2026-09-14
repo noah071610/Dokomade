@@ -25,6 +25,7 @@ const NOTION_VERSION = "2022-06-28"
 const TEXT_LIMIT = 2000
 /** The documented average is 3 requests/second. */
 const GAP_MS = 350
+const MAX_RETRIES = 5
 
 /** A pasted database URL carries the id as 32 hex digits somewhere inside it. */
 function databaseId(value: string): string {
@@ -76,6 +77,24 @@ function properties(row: SyncRow): Record<string, unknown> {
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
+async function request(row: SyncRow, env: NotionEnv, database: string): Promise<Response> {
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    const response = await fetch(ENDPOINT, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.token}`,
+        "Content-Type": "application/json",
+        "Notion-Version": NOTION_VERSION,
+      },
+      body: JSON.stringify({ parent: { database_id: database }, properties: properties(row) }),
+    })
+    if (response.status !== 429 || attempt === MAX_RETRIES - 1) return response
+    const retryAfter = Number(response.headers.get("retry-after"))
+    await sleep(Number.isFinite(retryAfter) ? retryAfter * 1000 : Math.min(1000 * 2 ** attempt, 16000))
+  }
+  throw new Error("Notion request retry limit reached")
+}
+
 /**
  * Send every row, one page each.
  *
@@ -90,15 +109,7 @@ export async function syncNotion(rows: SyncRow[], env: NotionEnv): Promise<SyncR
   for (const [i, row] of rows.entries()) {
     if (i > 0) await sleep(GAP_MS)
     try {
-      const response = await fetch(ENDPOINT, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${env.token}`,
-          "Content-Type": "application/json",
-          "Notion-Version": NOTION_VERSION,
-        },
-        body: JSON.stringify({ parent: { database_id: database }, properties: properties(row) }),
-      })
+      const response = await request(row, env, database)
       if (!response.ok) {
         // The body names the offending property on a schema mismatch, which is
         // the failure this hits most; 400 characters is enough to carry it.

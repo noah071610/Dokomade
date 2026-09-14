@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process"
 import readline from "node:readline/promises"
 import { ignoreEnvFile, writeEnvFile } from "../core/env.js"
-import { isRepo } from "../core/git.js"
+import { isGithubRepo, isIgnored } from "../core/git.js"
 import { findRoot, paths, readConfig, safeRelativePath, writeConfig } from "../core/store.js"
 import { WORKFLOW_FILE, writeWorkflow } from "../core/workflow.js"
 
@@ -285,7 +285,16 @@ export async function connect(service: string, cwd: string = process.cwd()): Pro
   }
   const integration = service as "notion" | "sheets"
   const config = readConfig(paths(root))
-  const localEnv = !isRepo(root)
+  const github = isGithubRepo(root)
+  const localEnv = !github
+
+  if (github && isIgnored(root, safeRelativePath(config.logDir, "docs/dokomade"))) {
+    console.error(
+      "\nconnect: work logs are blocked by .gitignore. GitHub Actions needs docs/dokomade committed; remove the rule manually and run connect again.\n",
+    )
+    process.exitCode = 1
+    return
+  }
 
   if (localEnv && !(await chooseLocalEnv())) {
     console.log(`\n${c.dim}${fig.line}  No credentials were saved. Exiting.${c.reset}\n`)
@@ -324,8 +333,8 @@ export async function connect(service: string, cwd: string = process.cwd()): Pro
     } else {
       const key = await ask("Google service-account JSON", { mask: true, hint: "(hidden, paste JSON)" })
       const spreadsheet = await ask("Google spreadsheet ID or URL", { hint: "(spreadsheet ID or URL)" })
-      const tab = await ask("Google Sheets tab", { hint: "[log]", defaultPrompt: "log" })
-      const values = { DOKOMADE_SHEETS_KEY: key, DOKOMADE_SHEETS_ID: spreadsheet, DOKOMADE_SHEETS_TAB: tab || "log" }
+      const tab = await ask("Google Sheets tab prefix", { hint: "(optional)" })
+      const values = { DOKOMADE_SHEETS_KEY: key, DOKOMADE_SHEETS_ID: spreadsheet, DOKOMADE_SHEETS_TAB: tab }
       if (localEnv) {
         writeEnvFile(root, values)
         ignoreEnvFile(root)

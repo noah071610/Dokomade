@@ -9,11 +9,28 @@ interface ServiceAccount {
   private_key?: string
 }
 
+interface SpreadsheetInfo {
+  sheets?: Array<{ properties?: { title?: string } }>
+}
+
+const HEADER = ["Date", "Time", "Task", "Goal", "Files", "Lines", "Duration", "AI", "Scope", "Status"]
 const base64url = (value: string): string => Buffer.from(value).toString("base64url")
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
 function spreadsheetId(value: string): string {
   const match = value.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/)
   return match?.[1] ?? value
+}
+
+function tabName(author: string, prefix: string): string {
+  const safe = author
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}_-]+/gu, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 90) || "unknown"
+  const cleanPrefix = prefix.trim().replace(/[^\p{L}\p{N}_-]+/gu, "_").replace(/^_+|_+$/g, "")
+  return `${cleanPrefix ? `${cleanPrefix}-` : ""}${safe}`.slice(0, 100)
 }
 
 function signedAssertion(account: ServiceAccount): string {
@@ -51,19 +68,58 @@ async function accessToken(account: ServiceAccount): Promise<string> {
   return data.access_token
 }
 
+async function request(make: () => Promise<Response>): Promise<Response> {
+  let response: Response | undefined
+  for (let attempt = 0; attempt < 5; attempt++) {
+    response = await make()
+    if (![429, 500, 502, 503, 504].includes(response.status) || attempt === 4) return response
+    const retryAfter = Number(response.headers.get("retry-after"))
+    await sleep(Number.isFinite(retryAfter) ? retryAfter * 1000 : Math.min(1000 * 2 ** attempt, 16000))
+  }
+  return response as Response
+}
+
+async function apiError(response: Response): Promise<Error> {
+  return new Error(`HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`)
+}
+
 function values(row: SyncRow): unknown[] {
   const delta = totalDelta(row.files)
   return [
     row.date,
     row.time,
     row.summary,
+    row.goal ?? "-",
     row.files.map((f) => `${f.path} +${f.added}/-${f.removed}`).join("\n"),
     delta.added - delta.removed,
     row.duration,
     row.agent,
-    row.author,
+    row.scope ?? "Etc",
     row.status,
   ]
+}
+
+async function existingTabs(id: string, token: string): Promise<Set<string>> {
+  const endpoint = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(id)}?fields=sheets.properties.title`
+  const response = await request(() =>
+    fetch(endpoint, { headers: { Authorization: `Bearer ${token}` } }),
+  )
+  if (!response.ok) throw await apiError(response)
+  const data = (await response.json()) as SpreadsheetInfo
+  return new Set(data.sheets?.map((sheet) => sheet.properties?.title).filter((title): title is string => Boolean(title)))
+}
+
+async function createTabs(id: string, token: string, names: string[]): Promise<void> {
+  if (names.length === 0) return
+  const endpoint = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(id)}:batchUpdate`
+  const response = await request(() =>
+    fetch(endpoint, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ requests: names.map((title) => ({ addSheet: { properties: { title } } })) }),
+    }),
+  )
+  if (!response.ok) throw await apiError(response)
 }
 
 export async function syncSheets(rows: SyncRow[], env: SheetsEnv): Promise<SyncResult> {
@@ -77,21 +133,34 @@ export async function syncSheets(rows: SyncRow[], env: SheetsEnv): Promise<SyncR
     return result
   }
 
-  const range = `${env.tab}!A:I`
+  const groups = new Map<string, SyncRow[]>()
   for (const row of rows) {
-    try {
-      const endpoint = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId(env.spreadsheet))}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ values: [values(row)] }),
-      })
-      if (!response.ok) throw new Error(`HTTP ${response.status}: ${(await response.text()).slice(0, 200)}`)
-      result.sent++
-    } catch (error) {
-      result.failed++
-      result.errors.push(`${row.date} ${row.time}: ${String(error)}`)
+    const tab = tabName(row.author, env.tabPrefix)
+    groups.set(tab, [...(groups.get(tab) ?? []), row])
+  }
+
+  try {
+    const id = spreadsheetId(env.spreadsheet)
+    const existing = await existingTabs(id, token)
+    const missing = [...groups.keys()].filter((name) => !existing.has(name))
+    await createTabs(id, token, missing)
+
+    // ponytail: append-only라 응답 유실 시 중복 가능; 정확히 한 번 필요하면 destination ID 추가.
+    for (const [tab, tabRows] of groups) {
+      const endpoint = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(id)}/values/${encodeURIComponent(`${tab}!A:J`)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`
+      const response = await request(() =>
+        fetch(endpoint, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ values: [ ...(missing.includes(tab) ? [HEADER] : []), ...tabRows.map(values) ] }),
+        }),
+      )
+      if (!response.ok) throw await apiError(response)
+      result.sent += tabRows.length
     }
+  } catch (error) {
+    result.failed = rows.length - result.sent
+    result.errors.push(String(error))
   }
   return result
 }

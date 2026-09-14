@@ -26,6 +26,20 @@ export function isRepo(root: string): boolean {
   return git(root, ["rev-parse", "--git-dir"]) !== null;
 }
 
+/** origin이 GitHub를 가리키면 true이며, 그 외 원격 저장소는 로컬 비밀값을 쓴다. */
+export function isGithubRepo(root: string): boolean {
+  const remote = git(root, ["remote", "get-url", "origin"])?.trim() ?? "";
+  return /(?:^|[@/:])github\.com(?:[/:]|$)/i.test(remote);
+}
+
+/** 인덱스와 작업 트리를 바꾸지 않고 ignore 규칙을 확인한다. */
+export function isIgnored(root: string, relativePath: string): boolean {
+  const result = spawnSync("git", ["-C", root, "check-ignore", "--quiet", "--no-index", "--", relativePath], {
+    stdio: "ignore",
+  });
+  return result.status === 0;
+}
+
 /** 경로를 포함하는 저장소를 반환하며, Git 밖이면 null을 반환한다. */
 export function repoTopLevel(root: string): string | null {
   return git(root, ["rev-parse", "--show-toplevel"])?.trim() || null;

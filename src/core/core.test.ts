@@ -8,6 +8,8 @@ import { classify, classifyAll, normalizeScope, SHARED_LABEL } from "./classify.
 import { authorName, changedSince } from "./git.js"
 import {
   appendRow,
+  allAuthorLogFiles,
+  allLogFiles,
   formatDuration,
   formatFiles,
   formatRow,
@@ -15,6 +17,7 @@ import {
   parseSyncRow,
   recentLogFiles,
   rowsWithStatus,
+  rowsToSync,
   setStatus,
   splitCells,
   statusOf,
@@ -620,6 +623,40 @@ describe("status column", () => {
     const legacy = path.join(root, "docs", "Noah Jang", "2026-09-07.md")
     appendRow(legacy, { at, summary: "legacy", files: [], durationMs: -1, author: "Noah Jang" })
     expect(recentLogFiles(root, "docs", "Noah Jang", 1, at)).toEqual([legacy])
+  })
+
+  it("reads every own date file and excludes pushed rows", () => {
+    const root = tmp()
+    const older = new Date(2026, 8, 1, 9, 0)
+    const newer = new Date(2026, 8, 2, 9, 0)
+    appendRow(logPath(root, "docs", "Noah", older), {
+      at: older,
+      summary: "older",
+      files: [],
+      durationMs: -1,
+      author: "Noah",
+      status: "commit",
+    })
+    appendRow(logPath(root, "docs", "Noah", newer), {
+      at: newer,
+      summary: "newer",
+      files: [],
+      durationMs: -1,
+      author: "Noah",
+      status: "push",
+    })
+    appendRow(logPath(root, "docs", "Jun", newer), {
+      at: newer,
+      summary: "other",
+      files: [],
+      durationMs: -1,
+      author: "Jun",
+    })
+
+    const files = allLogFiles(root, "docs", "Noah")
+    expect(files).toHaveLength(2)
+    expect(rowsToSync(files).map((row) => row.summary)).toEqual(["older"])
+    expect(allAuthorLogFiles(root, "docs")).toHaveLength(3)
   })
 })
 

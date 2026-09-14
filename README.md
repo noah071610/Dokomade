@@ -29,17 +29,21 @@ frontend and backend set up), they land at the top level instead.
 
 ## Optional integrations
 
-Notion and Google Sheets sync run only for rows added by a push. Credentials are
-stored in GitHub Actions secrets, not in the repository or local files.
+Notion and Google Sheets sync run after `dokomade push` for your own log rows
+whose status is not `push`. GitHub repositories use GitHub Actions by default;
+other repositories use a local `.env` file.
 
 ```bash
-npx dokomade connect notion   # stores the secrets, writes the sync workflow
+npx dokomade connect notion   # stores the secrets and prepares sync
 git add .github/workflows/dokomade-sync.yml && git commit -m "ci: dokomade sync"
 ```
 
-`connect` writes `.github/workflows/dokomade-sync.yml`. **Commit and push it** -
-after that every push that adds log rows syncs them by itself, with no further
-command. `npx dokomade sync` stays available for a manual run.
+For a GitHub repository, `connect` writes `.github/workflows/dokomade-sync.yml`.
+**Commit and push it** - after that GitHub Actions syncs the committed logs.
+`dokomade push` also syncs locally when the repository is not on GitHub.
+
+If `.gitignore` explicitly blocks the log directory, `connect` stops and asks you
+to remove that rule yourself. It never deletes an existing ignore rule.
 
 Required secrets are `DOKOMADE_NOTION_TOKEN`, `DOKOMADE_NOTION_DB`,
 `DOKOMADE_SHEETS_KEY`, and `DOKOMADE_SHEETS_ID`. Run `connect` yourself after
@@ -49,12 +53,12 @@ If the project has no GitHub repository, `connect` offers a local fallback. If
 you accept, it writes shell-compatible `export` entries to `.env`, restricts
 the file to your user, and adds `.env` to `.gitignore`. The local file is read
 for terminal syncs, but never commit or share it. A Git repository is still
-required for `sync` to identify which log rows are new.
+required for `commit` and `push`.
 
-`dokomade push` also syncs from your own terminal when those variables are set
-in the shell - handy while setting the integration up, since the result comes
-back immediately instead of a minute later in Actions. With none of them set it
-stays quiet and leaves the job to the workflow.
+Local sync scans every date file below your own author directory. GitHub Actions
+scans all checked-in author directories, keeps Notion in one database, and uses
+one Google Sheets tab per author. It appends rows in date order and never
+rewrites existing destination data.
 
 ---
 

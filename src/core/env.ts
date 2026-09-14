@@ -9,7 +9,7 @@ export interface NotionEnv {
 export interface SheetsEnv {
   key: string
   spreadsheet: string
-  tab: string
+  tabPrefix: string
 }
 
 const ENV_FILE = ".env"
@@ -91,5 +91,5 @@ export function sheetsEnv(env: NodeJS.ProcessEnv = process.env): SheetsEnv | nul
   const key = env.DOKOMADE_SHEETS_KEY?.trim()
   const spreadsheet = env.DOKOMADE_SHEETS_ID?.trim()
   if (!key || !spreadsheet) return null
-  return { key, spreadsheet, tab: env.DOKOMADE_SHEETS_TAB?.trim() || "log" }
+  return { key, spreadsheet, tabPrefix: env.DOKOMADE_SHEETS_TAB?.trim() || "" }
 }
