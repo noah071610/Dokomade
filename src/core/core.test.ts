@@ -29,6 +29,7 @@ import {
   DEFAULT_CONFIG,
   defaultLogDir,
   findRoot,
+  guessRoot,
   paths,
   readConfig,
   repoRelativePath,
@@ -372,6 +373,12 @@ describe("findRoot boundaries", () => {
     fs.mkdirSync(path.join(parent, "frontend", ".git"))
     expect(findRoot(parent)).toBeNull()
   })
+
+  it("uses a package workspace root when no Git root exists", () => {
+    const root = mk("apps", "web", "src")
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ workspaces: ["apps/*"] }))
+    expect(fs.realpathSync(guessRoot(path.join(root, "apps/web/src")))).toBe(fs.realpathSync(root))
+  })
 })
 
 describe("workspace repositories", () => {
@@ -471,9 +478,15 @@ describe("changedSince", () => {
     expect(changedSince(root, turnStart)).toEqual(["kept.ts"])
   })
 
-  it("returns nothing outside a git repo", () => {
+  it("finds root and nested files in a Git-less workspace", () => {
     const bare = fs.mkdtempSync(path.join(os.tmpdir(), "dkmd-nogit-"))
-    expect(changedSince(bare, 0)).toEqual([])
+    const turnStart = Date.now()
+    touch(bare, "stale.ts", turnStart - 60_000)
+    touch(bare, "package.json", turnStart + 1_000)
+    touch(bare, "apps/web/page.tsx", turnStart + 1_000)
+    touch(bare, "node_modules/dep/index.js", turnStart + 1_000)
+
+    expect(changedSince(bare, turnStart)).toEqual(["apps/web/page.tsx", "package.json"])
   })
 })
 

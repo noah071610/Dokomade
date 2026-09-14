@@ -253,14 +253,27 @@ export function findRoot(from: string): string | null {
   }
 }
 
-/** Same walk, but falls back to the git root / cwd. Used by `init`. */
+function isWorkspaceRoot(dir: string): boolean {
+  const pkg = readJSON<Record<string, unknown> | null>(path.join(dir, "package.json"), null)
+  const workspaces = pkg?.workspaces
+  return (
+    Array.isArray(workspaces) ||
+    (typeof workspaces === "object" && workspaces !== null && Array.isArray((workspaces as { packages?: unknown }).packages)) ||
+    fs.existsSync(path.join(dir, "pnpm-workspace.yaml")) ||
+    fs.existsSync(path.join(dir, "pnpm-workspace.yml"))
+  )
+}
+
+/** Same walk, but falls back to the Git/workspace root / cwd. Used by `init`. */
 export function guessRoot(from: string): string {
   let cur = path.resolve(from)
+  let workspaceRoot: string | null = null
   for (;;) {
     if (fs.existsSync(path.join(cur, STATE_DIR))) return cur
     if (fs.existsSync(path.join(cur, ".git"))) return cur
+    if (isWorkspaceRoot(cur)) workspaceRoot = cur
     const parent = path.dirname(cur)
-    if (parent === cur) return path.resolve(from)
+    if (parent === cur) return workspaceRoot ?? path.resolve(from)
     cur = parent
   }
 }

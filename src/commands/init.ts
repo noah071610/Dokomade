@@ -461,10 +461,9 @@ function cursorHookCommand(root: string, file: string): string {
 }
 
 function codexHookCommand(root: string, file: string): string {
-  const abs = hookScript(file)
-  const rel = path.relative(root, abs)
-  const inProject = !rel.startsWith("..") && !path.isAbsolute(rel)
-  return inProject ? `node "$(git rev-parse --show-toplevel)/${rel.split(path.sep).join("/")}"` : `node "${abs}"`
+  // Codex runs hooks from the session cwd, which may be a package inside a
+  // Git-less workspace. The absolute bundle path works for both Git and non-Git roots.
+  return `node "${hookScript(file)}"`
 }
 
 /**

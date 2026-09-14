@@ -120,10 +120,9 @@ export function lineDeltas(root: string, relPaths: string[]): Map<string, LineDe
  * at all - which is the single most common way a real turn goes unlogged, since
  * several agent presets edit through Bash by default.
  *
- * `git status` is what makes this cheap and safe rather than a working-tree
- * walk: it already honours .gitignore, so node_modules/, dist/, and build
- * output never reach the mtime check. The window is the turn itself, so the
- * scan cannot widen into "every file that was ever dirty".
+ * Git status is what makes this cheap and safe in a repository: it honours
+ * .gitignore. A Git-less workspace has no baseline or ignore engine, so the
+ * fallback walks files and skips tool state/dependency directories instead.
  *
  * ponytail: mtime-based, so a file the turn deleted is invisible - it has no
  * mtime left to compare. Add a `git status` D-status branch if deletions ever
@@ -132,19 +131,53 @@ export function lineDeltas(root: string, relPaths: string[]): Map<string, LineDe
 export function changedSince(root: string, sinceMs: number): string[] {
   if (!Number.isFinite(sinceMs)) return [];
   if (!isRepo(root)) {
-    let entries: fs.Dirent[]
-    try {
-      entries = fs.readdirSync(root, { withFileTypes: true })
-    } catch {
-      return []
+    const out: string[] = []
+    const skipped = new Set([
+      ".claude",
+      ".codex",
+      ".cursor",
+      ".dokomade",
+      ".git",
+      ".next",
+      ".nuxt",
+      ".turbo",
+      ".vite",
+      "build",
+      "coverage",
+      "dist",
+      "node_modules",
+      "out",
+      "target",
+    ])
+    const walk = (dir: string, prefix: string): void => {
+      let entries: fs.Dirent[]
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true })
+      } catch {
+        return
+      }
+      for (const entry of entries) {
+        if (skipped.has(entry.name)) continue
+        const abs = path.join(dir, entry.name)
+        const rel = prefix ? `${prefix}/${entry.name}` : entry.name
+        if (entry.isDirectory()) {
+          if (fs.existsSync(path.join(abs, ".git"))) {
+            out.push(...changedSince(abs, sinceMs).map((file) => `${rel}/${file}`))
+          } else {
+            walk(abs, rel)
+          }
+          continue
+        }
+        if (!entry.isFile()) continue
+        try {
+          if (fs.statSync(abs).mtimeMs >= sinceMs) out.push(rel)
+        } catch {
+          // Deleted, or unreadable. Either way there is nothing to log.
+        }
+      }
     }
-    return entries
-      .filter((entry) => entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules")
-      .flatMap((entry) => {
-        const child = path.join(root, entry.name)
-        if (!isRepo(child)) return []
-        return changedSince(child, sinceMs).map((file) => path.join(entry.name, file).split(path.sep).join("/"))
-      })
+    walk(root, "")
+    return out.sort()
   }
   const raw = git(root, [
     "status",

@@ -56,6 +56,25 @@ describe("recordTurn", () => {
     expect(log).toContain("| Etc | stage |")
   })
 
+  it("writes a row for a changed file in a Git-less monorepo", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "dokomade-nogit-"))
+    fs.mkdirSync(path.join(root, ".dokomade"))
+    fs.mkdirSync(path.join(root, "apps", "web"), { recursive: true })
+    fs.writeFileSync(path.join(root, "apps", "web", "page.tsx"), "export const page = true;\n")
+    writeJSON(paths(root).config, {
+      logDir: "docs/dokomade",
+      projectType: "fullstack",
+      classify: { frontend: { pageDirs: ["apps/web"], sharedDirs: [] }, backend: { routeDirs: [] } },
+    })
+    writeJSON(paths(root).state, { promptStartedAt: Date.now() - 1000 })
+
+    expect(await recordTurn(root, "codex", undefined, "test-nogit", Date.now())).toBe(true)
+    const authorDir = fs.readdirSync(path.join(root, "docs", "dokomade"))[0]!
+    const logFile = fs.readdirSync(path.join(root, "docs", "dokomade", authorDir))[0]!
+    const log = fs.readFileSync(path.join(root, "docs", "dokomade", authorDir, logFile), "utf8")
+    expect(log).toContain("page.tsx")
+  })
+
   it("ignores pending paths outside the project", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "dokomade-"))
     fs.mkdirSync(path.join(root, ".dokomade"))
