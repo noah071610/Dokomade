@@ -27,6 +27,19 @@ Logs land in `docs/dokomade/<github_name_lowercase_with_underscores>/<YYYY-MM-DD
 `package.json` that installs dokomade. If more than one package installs it (a monorepo with both
 frontend and backend set up), they land at the top level instead.
 
+## Cursor support
+
+Cursor Agent logging uses `beforeSubmitPrompt`, `afterFileEdit`, and `stop`.
+Inline Tab completions are not logged.
+
+Cursor log titles use changed file names. Goal is empty and Scope defaults to
+`Etc`, because this integration does not inject the title request or collect
+the assistant's final response. Logging makes no extra AI calls.
+
+Automatic commit-message generation through Cursor CLI is not supported.
+Use a supported, authenticated Claude Code, Codex, or Gemini CLI, or provide a
+manual message with `npx dokomade commit -am "fix: ..."`.
+
 ## Optional integrations
 
 Notion and Google Sheets sync run after `dokomade push` for your own log rows

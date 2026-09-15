@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { claudeCode } from "./claude-code.js";
 import { codex } from "./codex.js";
 import { cursor } from "./cursor.js";
@@ -9,6 +9,56 @@ const common = {
 };
 
 describe("cursor adapter", () => {
+  beforeEach(() => vi.stubEnv("CURSOR_PROJECT_DIR", undefined));
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it.each(["beforeSubmitPrompt", "afterFileEdit", "stop"])(
+    "%s는 여러 폴더 중 CURSOR_PROJECT_DIR의 프로젝트를 선택한다",
+    (hook_event_name) => {
+      vi.stubEnv("CURSOR_PROJECT_DIR", "/second-repo");
+      expect(cursor.parse({
+        ...common,
+        workspace_roots: ["/repo", "/second-repo"],
+        hook_event_name,
+        file_path: "/second-repo/changed.ts",
+      })).toMatchObject({ cwd: "/second-repo" });
+    },
+  );
+
+  it.each(["beforeSubmitPrompt", "afterFileEdit", "stop"])(
+    "%s는 환경변수 없이 실행된 프로젝트 훅의 작업 폴더를 선택한다",
+    (hook_event_name) => {
+      vi.spyOn(process, "cwd").mockReturnValue("/second-repo");
+      expect(cursor.parse({
+        ...common,
+        workspace_roots: ["/repo", "/second-repo/"],
+        hook_event_name,
+        file_path: "/second-repo/changed.ts",
+      })).toMatchObject({ cwd: "/second-repo" });
+    },
+  );
+
+  it("프로젝트 환경변수가 있으면 workspace_roots 없이도 사용한다", () => {
+    vi.stubEnv("CURSOR_PROJECT_DIR", "/second-repo");
+    expect(cursor.parse({ conversation_id: "conv-1", hook_event_name: "stop" }))
+      .toMatchObject({ cwd: "/second-repo" });
+  });
+
+  it("프로젝트 정보가 없으면 작업 폴더를 사용한다", () => {
+    vi.spyOn(process, "cwd").mockReturnValue("/second-repo");
+    expect(cursor.parse({ conversation_id: "conv-1", hook_event_name: "stop", workspace_roots: [] }))
+      .toMatchObject({ cwd: "/second-repo" });
+  });
+
+  it("작업 폴더가 workspace 밖이면 첫 번째 유효한 루트를 사용한다", () => {
+    vi.spyOn(process, "cwd").mockReturnValue("/elsewhere");
+    expect(cursor.parse({ ...common, hook_event_name: "stop", workspace_roots: [null, "", 123, "/repo"] }))
+      .toMatchObject({ cwd: "/repo" });
+  });
+
   it("normalizes beforeSubmitPrompt", () => {
     expect(
       cursor.parse({

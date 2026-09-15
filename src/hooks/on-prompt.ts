@@ -9,9 +9,8 @@
  * answer comes back through `last_assistant_message` on Stop, so no tool call
  * is needed to collect it either.
  *
- * Cursor has no such channel: `beforeSubmitPrompt` accepts only `continue` and
- * `user_message`, so it gets an explicit allow instead and its rows are titled
- * from the prompt text.
+ * Cursor의 beforeSubmitPrompt에는 문맥 주입 채널이 없어 제출 허용만
+ * 반환한다. 로그 제목은 변경 파일명으로 만들며 프롬프트는 사용하지 않는다.
  *
  * Exit code is always 0. Exit 2 on this event erases the user's prompt, so no
  * failure in here may ever escape as a non-zero status. Nothing else may write

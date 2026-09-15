@@ -8,12 +8,12 @@
  *
  * Verified against https://cursor.com/docs/agent/hooks (2026-09).
  *
- * Title generation stays per-tool by design. Cursor's `beforeSubmitPrompt`
- * has no context-injection channel (its only output fields are `continue` and
- * `user_message`), so the `[summary]` / `[goal]` / `[scope]` request is never sent here and
- * `stop` carries no assistant message. Rows written from Cursor fall back to
- * the prompt text, which MechanicalSummarizer already handles.
+ * Cursor의 beforeSubmitPrompt는 continue와 user_message만 반환하므로
+ * 제목 태그 요청을 주입하지 않는다. stop에도 응답 본문이 없어서
+ * MechanicalSummarizer는 변경 파일명으로 제목을 만들고 Goal을 비우며,
+ * Scope는 Etc로 기록한다. 프롬프트는 제목에 사용하지 않는다.
  */
+import path from "node:path";
 import type { Adapter, DokomadeEvent } from "./types.js";
 
 type Json = Record<string, unknown>;
@@ -22,19 +22,17 @@ const str = (v: unknown): string | undefined =>
   typeof v === "string" && v.length > 0 ? v : undefined;
 
 /**
- * Cursor gives `workspace_roots`, never `cwd`. Project hooks are spawned from
- * the project root, so `process.cwd()` is the right fallback when the field is
- * absent or empty.
+ * 프로젝트 환경변수를 우선하고, 없으면 실제 훅 작업 폴더와 일치하는
+ * workspace 루트를 선택한다. 실행 위치가 workspace 밖이면 첫 루트를 쓴다.
  */
 function workspaceRoot(p: Json): string {
-  const roots = p.workspace_roots;
-  if (Array.isArray(roots)) {
-    for (const root of roots) {
-      const v = str(root);
-      if (v) return v;
-    }
-  }
-  return str(process.env.CURSOR_PROJECT_DIR) ?? process.cwd();
+  const projectDir = str(process.env.CURSOR_PROJECT_DIR);
+  if (projectDir) return projectDir;
+  const cwd = process.cwd();
+  const roots = Array.isArray(p.workspace_roots)
+    ? p.workspace_roots.filter((root): root is string => Boolean(str(root)))
+    : [];
+  return roots.some((root) => path.resolve(root) === cwd) ? cwd : roots[0] ?? cwd;
 }
 
 /**
