@@ -33,13 +33,32 @@ import {
   paths,
   readConfig,
   repoRelativePath,
+  safeRelativePath,
   writeConfig,
   writeJSON,
   workspaceRepositories,
 } from "./store.js"
 import { MechanicalSummarizer } from "./summarize.js"
+import { isSensitive } from "../commands/commit.js"
 
 const cfg = DEFAULT_CONFIG.classify
+
+describe("repository-controlled input", () => {
+  it("rejects config paths that would break out of the generated workflow YAML", () => {
+    expect(safeRelativePath('docs"\n  evil: yes', "docs/dokomade")).toBe("docs/dokomade")
+    expect(safeRelativePath("docs/dokomade\nssh-ed25519 AAAA", "fallback")).toBe("fallback")
+    expect(safeRelativePath("apps/web/docs/dokomade", "fallback")).toBe("apps/web/docs/dokomade")
+  })
+
+  it("flags staged files that usually hold secrets, but not their templates", () => {
+    for (const rel of [".env", "apps/api/.env.local", "certs/server.pem", "id_ed25519", "config/credentials.json"]) {
+      expect(isSensitive(rel)).toBe(true)
+    }
+    for (const rel of [".env.example", "id_ed25519.pub", "src/env.ts", ".envrc.md"]) {
+      expect(isSensitive(rel)).toBe(false)
+    }
+  })
+})
 
 describe("classify", () => {
   it("normalizes AI scope tokens and rejects arbitrary text", () => {

@@ -1,27 +1,28 @@
 {
   "name": "dokomade",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Log what you actually changed while vibe coding",
-  "main": "./dist/cli.js",
-  "scripts": {
-    "build": "tsup",
-    "dev": "tsup --watch",
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit",
-    "prepack": "npm run build"
+  "keywords": [
+    "claude-code",
+    "cursor",
+    "codex",
+    "ai",
+    "vibe-coding",
+    "worklog",
+    "changelog",
+    "hooks",
+    "cli"
+  ],
+  "homepage": "https://github.com/noah071610/Dokomade#readme",
+  "bugs": {
+    "url": "https://github.com/noah071610/Dokomade/issues"
   },
-  "author": "",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/noah071610/Dokomade.git"
+  },
   "license": "ISC",
-  "devDependencies": {
-    "@types/node": "26.4.1",
-    "tsup": "8.5.1",
-    "typescript": "7.0.2",
-    "vitest": "5.0.0"
-  },
-  "dependencies": {
-    "commander": "13.1.0",
-    "zod": "4.5.4"
-  },
+  "author": "Noah Jang",
   "type": "module",
   "bin": {
     "dokomade": "dist/cli.js"
@@ -32,16 +33,21 @@
   "engines": {
     "node": ">=18"
   },
-  "directories": {
-    "doc": "docs"
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "prepack": "npm run build"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/noah071610/Dokomade.git"
+  "dependencies": {
+    "commander": "13.1.0",
+    "zod": "4.5.4"
   },
-  "keywords": [],
-  "bugs": {
-    "url": "https://github.com/noah071610/Dokomade/issues"
-  },
-  "homepage": "https://github.com/noah071610/Dokomade#readme"
+  "devDependencies": {
+    "@types/node": "26.4.1",
+    "tsup": "8.5.1",
+    "typescript": "7.0.2",
+    "vitest": "5.0.0"
+  }
 }

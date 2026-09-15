@@ -96,6 +96,22 @@ const NOISE = [
 const isNoise = (rel: string): boolean => NOISE.some((re) => re.test(rel))
 
 /**
+ * Files that almost always hold credentials.
+ *
+ * `git add -A` stages whatever .gitignore misses - init only ignores `.env` in
+ * the root, never in child repositories - and `-y` or a non-TTY run shows no
+ * preview, so these stop the commit instead of riding along to `push`.
+ */
+const SENSITIVE = [
+  /(^|\/)\.env(\.(?!example$|sample$|template$)[^/]+)?$/,
+  /\.(pem|key|p12|pfx)$/i,
+  /(^|\/)id_(rsa|dsa|ecdsa|ed25519)$/,
+  /(^|\/)credentials\.json$/,
+]
+
+export const isSensitive = (rel: string): boolean => SENSITIVE.some((re) => re.test(rel))
+
+/**
  * dokomade's own files: the log rows and `.dokomade/`.
  *
  * They are committed like anything else, but they are the bookkeeping for the
@@ -509,6 +525,15 @@ export async function commit(opts: CommitOptions, cwd: string = process.cwd(), s
 
   const staged = stagedFiles(gitRoot)
   if (staged.length === 0) return fail("no changes to commit.")
+  // Before the brief: a staged secret must not reach the AI prompt either.
+  // Deleted files are skipped - removing a tracked .env is the fix, not the leak.
+  const sensitive = staged.filter((rel) => isSensitive(rel) && fs.existsSync(path.join(gitRoot, rel)))
+  if (sensitive.length > 0) {
+    return fail(
+      `refusing to commit files that look like secrets: ${sensitive.join(", ")}\n` +
+        "  Add them to .gitignore and run `git reset -- <file>`, or commit with git directly if this is intended.",
+    )
+  }
 
   const logFiles = recentLogFiles(root, config.logDir, author, config.commit.windowDays)
   const logged = repoLoggedPaths(p, root, gitRoot)

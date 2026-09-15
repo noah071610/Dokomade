@@ -197,13 +197,17 @@ export function paths(root: string): Paths {
   }
 }
 
-/** Keep config paths relative to the project; config is repository-controlled input. */
+/**
+ * Keep config paths relative to the project; config is repository-controlled input.
+ * 따옴표와 제어 문자는 거부한다. logDir은 생성되는 workflow YAML 문자열에 그대로 들어간다.
+ */
 export function safeRelativePath(value: unknown, fallback: string): string {
   if (typeof value !== "string") return fallback
   const candidate = value.trim()
   const normalized = candidate.replaceAll("\\", "/")
   if (
     !candidate ||
+    /["\x00-\x1f\x7f]/.test(candidate) ||
     normalized.startsWith("/") ||
     /^[A-Za-z]:/.test(normalized) ||
     normalized.split("/").includes("..")

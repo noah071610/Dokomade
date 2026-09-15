@@ -29,7 +29,12 @@ function parseValue(value: string): string {
   return trimmed
 }
 
-/** Load local shell-style secrets without overriding explicitly exported values. */
+/**
+ * Load local shell-style secrets without overriding explicitly exported values.
+ *
+ * dokomade 키만 읽는다. 저장소에 들어 있는 .env가 LD_PRELOAD, GIT_*, NODE_OPTIONS
+ * 같은 값을 넣으면 이후 실행하는 git이 그 환경을 그대로 물려받는다.
+ */
 export function loadEnvFile(root: string): void {
   let source: string
   try {
@@ -39,7 +44,7 @@ export function loadEnvFile(root: string): void {
   }
 
   for (const line of source.split(/\r?\n/)) {
-    const match = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/)
+    const match = line.match(/^\s*(?:export\s+)?(DOKOMADE_[A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/)
     if (!match?.[1] || match[2] === undefined || process.env[match[1]] !== undefined) continue
     process.env[match[1]] = parseValue(match[2])
   }

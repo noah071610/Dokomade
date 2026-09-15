@@ -41,4 +41,16 @@ describe("local env file", () => {
     loadEnvFile(root)
     expect(process.env.DOKOMADE_NOTION_TOKEN).toBe("shell-wins")
   })
+
+  it("ignores every key that is not dokomade's own", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "dkmd-env-"))
+    delete process.env.DOKOMADE_NOTION_DB
+    // A repository-supplied .env would otherwise hand these to every git child.
+    fs.writeFileSync(path.join(root, ".env"), "LD_PRELOAD=./evil.so\nexport GIT_CONFIG_COUNT=1\nDOKOMADE_NOTION_DB=db\n")
+
+    loadEnvFile(root)
+    expect(process.env.LD_PRELOAD).toBeUndefined()
+    expect(process.env.GIT_CONFIG_COUNT).toBeUndefined()
+    expect(process.env.DOKOMADE_NOTION_DB).toBe("db")
+  })
 })

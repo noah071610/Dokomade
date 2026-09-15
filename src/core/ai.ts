@@ -21,22 +21,19 @@ interface CliSpec {
   argvPrompt?: (prompt: string) => string[];
 }
 
+// The brief embeds text the repository controls - the convention file, file
+// names, git error output. A model given tools and a prompt built out of
+// untrusted strings can be talked into using them. It only needs to emit text
+// here, so every CLI runs with no tools or read-only.
 const CLIS: CliSpec[] = [
-  // `--allowedTools ""` matters: the brief embeds log titles, which are the
-  // user's own prompt text. A model given tools and a prompt built out of
-  // untrusted strings can be talked into using them. It only needs to emit
-  // text here, so it gets nothing else.
-  { id: "claude", bin: "claude", args: ["-p", "--allowedTools", ""], stdin: true },
-  { id: "codex", bin: "codex", args: ["exec", "-"], stdin: true },
-  {
-    id: "cursor",
-    bin: "cursor-agent",
-    args: [],
-    stdin: false,
-    // Default output is stream-json; text is the only form worth parsing.
-    argvPrompt: (p) => ["-p", "--output-format", "text", p],
-  },
-  { id: "gemini", bin: "gemini", args: [], stdin: false, argvPrompt: (p) => ["-p", p] },
+  // `--allowedTools ""` only skips permission prompts; `--tools ""` removes the tools.
+  { id: "claude", bin: "claude", args: ["-p", "--tools", ""], stdin: true },
+  // Pinned so a user config with workspace-write or full access does not apply.
+  { id: "codex", bin: "codex", args: ["exec", "-s", "read-only", "-"], stdin: true },
+  // An untrusted folder makes gemini refuse headless runs: a null answer, not a hole.
+  { id: "gemini", bin: "gemini", args: [], stdin: false, argvPrompt: (p) => ["--approval-mode", "plan", "-p", p] },
+  // ponytail: cursor-agent is left out - its `-p` has write and bash with no flag
+  // to remove them. Add it back once it has a no-tools mode.
 ];
 
 /** `which`, without spawning a process for it. */

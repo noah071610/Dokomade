@@ -3,6 +3,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { describe, expect, it } from "vitest"
+import pkg from "../../package.json" with { type: "json" }
 import { resolveRev } from "./git.js"
 import { WORKFLOW_FILE, writeWorkflow } from "./workflow.js"
 
@@ -45,9 +46,24 @@ describe("writeWorkflow", () => {
 
     const yaml = fs.readFileSync(path.join(root, WORKFLOW_FILE), "utf8")
     expect(yaml).toContain('- "logs/work/**"')
-    expect(yaml).toContain("dokomade@latest sync --all-authors")
+    // The job holds secrets, so it must never follow whatever `latest` becomes.
+    expect(yaml).toContain(`dokomade@${pkg.version} sync --all-authors`)
+    expect(yaml).not.toContain("@latest")
+    expect(yaml).toContain("permissions:\n  contents: read")
     expect(yaml).toContain("DOKOMADE_NOTION_TOKEN: ${{ secrets.DOKOMADE_NOTION_TOKEN }}")
 
     expect(writeWorkflow(root, "docs/dokomade")).toBe(true)
+  })
+
+  it("replaces a committed symlink instead of writing through it", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "dkmd-wfl-"))
+    const outside = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "dkmd-out-")), "authorized_keys")
+    fs.writeFileSync(outside, "ORIGINAL\n")
+    fs.mkdirSync(path.dirname(path.join(root, WORKFLOW_FILE)), { recursive: true })
+    fs.symlinkSync(outside, path.join(root, WORKFLOW_FILE))
+
+    expect(writeWorkflow(root, "docs/dokomade")).toBe(true)
+    expect(fs.readFileSync(outside, "utf8")).toBe("ORIGINAL\n")
+    expect(fs.lstatSync(path.join(root, WORKFLOW_FILE)).isSymbolicLink()).toBe(false)
   })
 })
