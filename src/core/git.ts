@@ -240,7 +240,7 @@ export function gitPassthrough(root: string, args: string[], stdin?: string): Gi
     timeout: 120_000,
     maxBuffer: 8 * 1024 * 1024,
   });
-  const processError = result.error?.message ?? (result.signal ? `git 종료됨 (${result.signal})` : undefined);
+  const processError = result.error?.message ?? (result.signal ? `git terminated (${result.signal})` : undefined);
   const output = [result.stdout, result.stderr, processError]
     .filter((part): part is string => typeof part === "string" && part.length > 0)
     .join("");

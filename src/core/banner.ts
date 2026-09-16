@@ -1,7 +1,7 @@
 /**
  * The terminal report for `dokomade commit` / `dokomade push`.
  *
- * Summaries are Korean, so they are double-width and cannot be padded into a
+ * Summaries can carry double-width characters, so they cannot be padded into a
  * column with `padEnd`. They go last on every line instead - only ASCII of
  * known width is ever aligned.
  */
@@ -49,7 +49,7 @@ export function report({ verb, meta, rows, notes = [] }: Report): void {
 
   out.push("")
   if (rows.length === 0) {
-    out.push(`${INDENT}${dim("(로그 행 없음)")}`)
+    out.push(`${INDENT}${dim("(no log rows)")}`)
   } else {
     for (const row of rows) {
       out.push(`${INDENT}${green("●")} ${dim(row.time)}  ${green(verb.padEnd(6))} ${row.summary}`)

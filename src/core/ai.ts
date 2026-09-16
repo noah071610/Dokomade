@@ -109,7 +109,7 @@ export function runAi(id: AiCliId, prompt: string, cwd: string): Promise<string 
         // CLI and a usage limit all look identical from here.
         const e = error as { signal?: string | null };
         const tail = String(stderr ?? "").trim().split("\n").slice(-3).join("\n");
-        if (e.signal) console.error(`${spec.bin} 종료됨 (${e.signal}, 180초 제한).`);
+        if (e.signal) console.error(`${spec.bin} terminated (${e.signal}, 180s limit).`);
         if (tail) console.error(tail);
         resolve(null);
       },

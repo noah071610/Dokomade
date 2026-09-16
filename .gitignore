@@ -10,8 +10,6 @@ Master.md
 .dokomade/queue.jsonl
 .dokomade/perf.jsonl
 docs/*
-# The logs are the input `dokomade sync` diffs; they have to be committed.
-docs/dokomade
 
 *.tgz
 dist

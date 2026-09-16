@@ -66,15 +66,15 @@ export const SCOPE_TAG = `[${SCOPE_NAME}]`
  * Notion title; Goal is its own text column.
  */
 export const TITLE_REQUEST = [
-  "파일을 수정했다면 응답의 마지막 세 줄에 반드시 아래 세 줄을 추가해라.",
-  `${SCOPE_TAG} <Frontend, Backend, Core 중 하나 이상을 쉼표로 연결하거나 Etc>`,
-  `${TITLE_TAG} <무엇을 바꿨는지, 바뀐 대상을 포함한 한국어 명사형 ${TITLE_TARGET}자 안팎, 최대 ${MAX_LEN}자>`,
-  `${GOAL_TAG} <왜 바꿨는지, 한국어 ${TITLE_TARGET}자 안팎, 최대 ${MAX_LEN}자>`,
-  `세 줄 다 짧게 줄이지 말고 ${TITLE_TARGET}자까지 채워서 구체적으로 써라. ${TITLE_TAG}는 무엇을 어떻게 바꿨는지, ${GOAL_TAG}는 그렇게 한 이유가 드러나야 한다.`,
-  "'수정', '고쳤습니다', '완료'처럼 의미 없는 제목은 금지한다.",
-  "세 줄 모두 반드시 한 줄로 써라. 줄바꿈, 목록, 코드블록 금지.",
-  `${GOAL_TAG}에는 동기나 배경을 적고, ${TITLE_TAG} 내용을 다시 쓰지 마라.`,
-  "파일을 수정하지 않았다면 세 줄 다 출력하지 마라.",
+  "If you edited any file, end your reply with exactly these three lines.",
+  `${SCOPE_TAG} <one or more of Frontend, Backend, Core joined by commas, or Etc>`,
+  `${TITLE_TAG} <what you changed, naming what it changed, a noun phrase of about ${TITLE_TARGET} characters, ${MAX_LEN} max>`,
+  `${GOAL_TAG} <why you changed it, about ${TITLE_TARGET} characters, ${MAX_LEN} max>`,
+  `Do not cut the lines short: fill up to ${TITLE_TARGET} characters and be specific. ${TITLE_TAG} says what changed and how, ${GOAL_TAG} says the reason behind it.`,
+  "Meaningless titles such as 'fix', 'fixed it', or 'done' are forbidden.",
+  "Write each of the three lines as a single line. No line breaks, lists, or code blocks.",
+  `Put the motive or background in ${GOAL_TAG}; do not restate ${TITLE_TAG}.`,
+  "If you edited no files, omit all three lines.",
 ].join("\n")
 
 // Matches a tag anywhere on its own line; the assistant sometimes explains the
@@ -106,7 +106,7 @@ const INJECTED_BLOCK =
 /** Declarative endings the assistant closes a report with: "...수정했습니다." */
 const TRAILING_DONE = /\s*(?:했|하였|되었|됐|완료했|추가했|수정했)(?:습니다|어요|음|다)\s*[.!?~]*$/
 const GENERIC_SENTENCE =
-  /^(?:네[, ]*)?(?:고쳤습니다|수정(?:했습니다)?|완료했습니다|반영했습니다|처리했습니다|해결했습니다|변경했습니다|추가했습니다|끝났습니다|됐습니다)[.!?~。]*$/
+  /^(?:네[, ]*)?(?:고쳤습니다|수정(?:했습니다)?|완료했습니다|반영했습니다|처리했습니다|해결했습니다|변경했습니다|추가했습니다|끝났습니다|됐습니다)[.!?~。]*$|^(?:ok[,. ]*)?(?:done|fixed(?: it)?|updated|completed|changed|added|all set)[.!?]*$/i
 
 function clean(text: string): string {
   return (
@@ -165,7 +165,7 @@ function fromFiles(labels: string[], files: FileChange[]): string {
   ]
     .filter(Boolean)
     .slice(0, 2)
-  return condense(names.length > 0 ? `${names.join(", ")} 변경` : labels.slice(0, 2).join(", "))
+  return condense(names.length > 0 ? `${names.join(", ")} changed` : labels.slice(0, 2).join(", "))
 }
 
 /**
@@ -204,7 +204,7 @@ export class MechanicalSummarizer implements Summarizer {
       if (said) return { summary: said, scope }
     }
 
-    return { summary: fromFiles(input.labels, input.files) || "파일 수정", scope }
+    return { summary: fromFiles(input.labels, input.files) || "File changes", scope }
   }
 }
 

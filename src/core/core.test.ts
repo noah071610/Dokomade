@@ -279,7 +279,7 @@ describe("MechanicalSummarizer", () => {
         files: [{ path: "src/auth/login.ts", added: 1, removed: 0 }],
         lastAssistantMessage: "고쳤습니다.",
       }),
-    ).toEqual({ summary: "login 변경", scope: "Etc" })
+    ).toEqual({ summary: "login changed", scope: "Etc" })
   })
 
   it("falls back to what the assistant said, stripped of markdown", async () => {
@@ -326,7 +326,17 @@ describe("MechanicalSummarizer", () => {
         files: [{ path: "src/auth/login.ts", added: 1, removed: 0 }],
         lastAssistantMessage: "고쳤습니다.",
       }),
-    ).toBe("login 변경")
+    ).toBe("login changed")
+  })
+
+  it("skips an English generic acknowledgement too", async () => {
+    expect(
+      await title({
+        labels: [],
+        files: [{ path: "src/auth/login.ts", added: 1, removed: 0 }],
+        lastAssistantMessage: "Done.",
+      }),
+    ).toBe("login changed")
   })
 
   it("rejects a generic tagged title too", async () => {
@@ -336,11 +346,11 @@ describe("MechanicalSummarizer", () => {
         files: [{ path: "src/auth/login.ts", added: 1, removed: 0 }],
         lastAssistantMessage: "[summary] 수정",
       }),
-    ).toBe("login 변경")
+    ).toBe("login changed")
   })
 
   it("has a title even with no labels", async () => {
-    expect(await title({ labels: [], files: [] })).toBe("파일 수정")
+    expect(await title({ labels: [], files: [] })).toBe("File changes")
   })
 })
 
