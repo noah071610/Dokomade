@@ -14,6 +14,7 @@ import {
   formatFiles,
   formatRow,
   logPath,
+  parseFiles,
   parseSyncRow,
   recentLogFiles,
   rowsWithStatus,
@@ -145,13 +146,13 @@ describe("config", () => {
 })
 
 describe("markdown", () => {
-  it("renders the file cell as basename +add/-del joined by <br>", () => {
-    expect(
-      formatFiles([
-        { path: "src/app/calculator/page.tsx", added: 42, removed: 13 },
-        { path: "src/i18n/ko.json", added: 24, removed: 0 },
-      ]),
-    ).toBe("`page.tsx` +42/-13<br>`ko.json` +24/-0")
+  it("keeps full paths so multi-repository rows can be identified", () => {
+    const files = [
+      { path: "tabica-front/src/app/calculator/page.tsx", added: 42, removed: 13 },
+      { path: "tabica-front/src/i18n/ko.json", added: 24, removed: 0 },
+    ]
+    expect(formatFiles(files)).toBe("`tabica-front/src/app/calculator/page.tsx` +42/-13<br>`tabica-front/src/i18n/ko.json` +24/-0")
+    expect(parseFiles(formatFiles(files))).toEqual(files)
   })
 
   it("formats durations by magnitude", () => {

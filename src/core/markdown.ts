@@ -112,7 +112,7 @@ export interface SyncRow {
 
 export function formatFiles(files: FileChange[]): string {
   if (files.length === 0) return "-"
-  return files.map((f) => `\`${cell(path.posix.basename(f.path))}\` +${f.added}/-${f.removed}`).join("<br>")
+  return files.map((f) => `\`${cell(f.path)}\` +${f.added}/-${f.removed}`).join("<br>")
 }
 
 /** Parse the file cell written by `formatFiles`. */
