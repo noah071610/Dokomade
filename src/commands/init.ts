@@ -16,6 +16,7 @@ import path from "node:path"
 import readline from "node:readline/promises"
 import { fileURLToPath } from "node:url"
 import { availableClis } from "../core/ai.js"
+import { ART } from "../core/banner.js"
 import { isGithubRepo, isIgnored } from "../core/git.js"
 import {
   DEFAULT_COMMIT,
@@ -640,16 +641,19 @@ export async function init(cwd: string = process.cwd(), projectType?: ProjectTyp
       `  ${c.cyan}${fig.bullet}${c.reset} ${c.dim}gitignore${c.reset}    ${c.green}+${ignored.length} entries${c.reset}`,
     )
   }
-  console.log(
-    `\n${c.yellow}${fig.bullet}${c.reset} ${c.bold}Next step:${c.reset} Restart Claude Code/Codex/Cursor (or run /hooks) so it picks up the new settings.`,
-  )
-  // Codex refuses to execute an untrusted hook - silently, with no error and no
-  // log line. Until the review is accepted, .codex/hooks.json is registered but
-  // dead, which looks exactly like "Codex ignores dokomade".
-  console.log(
-    `${c.yellow}${fig.bullet}${c.reset} ${c.bold}Codex only:${c.reset} start ${c.cyan}codex${c.reset} interactively once in this project and ${c.bold}approve the hooks review${c.reset} at startup.`,
-  )
-  console.log(
-    `  ${c.gray}Until then Codex skips every dokomade hook without an error. \`codex exec\` cannot approve them.${c.reset}\n`,
-  )
+  console.log("")
+  for (const line of ART) console.log(`  ${c.cyan}${line}${c.reset}`)
+  console.log(`\n  ${c.green}${c.bold}Setup installed.${c.reset} ${c.bold}Activate hooks in your coding tool:${c.reset}\n`)
+  // 설정 파일 생성과 사용자의 hook 신뢰 승인은 별개다.
+  console.log(`  ${c.yellow}${fig.step}${c.reset} ${c.bold}Codex — manual approval required${c.reset}`)
+  console.log(`    1. From the project root shown above, run ${c.cyan}codex${c.reset} in your own terminal.`)
+  console.log(`    2. Accept the project trust prompt if shown, then type ${c.cyan}/hooks${c.reset} inside Codex.`)
+  console.log("    3. Select hooks from .codex/hooks.json; review/trust the dokomade commands (hooks/on-*.js).")
+  console.log(`    ${c.gray}Older versions may ask you to approve a hooks review at startup instead.${c.reset}`)
+  console.log(`    ${c.yellow}Untrusted hooks are skipped. Review again if hook definitions change.${c.reset}\n`)
+  console.log(`  ${c.cyan}${fig.step}${c.reset} ${c.bold}Claude Code${c.reset}`)
+  console.log(`    Restart Claude Code; accept workspace trust if prompted. Check ${c.cyan}/hooks${c.reset} for dokomade.\n`)
+  console.log(`  ${c.cyan}${fig.step}${c.reset} ${c.bold}Cursor${c.reset}`)
+  console.log("    Hooks auto-reload. Check Customize > Hooks; restart Cursor if dokomade is missing.\n")
+  console.log(`  ${c.gray}init installs hook settings; it does not approve trust on your behalf.${c.reset}\n`)
 }

@@ -6,8 +6,8 @@
  * known width is ever aligned.
  */
 
-// Figlet "slant". Backslashes are escaped, so the raw art is one \ per \\.
-const ART = [
+// init과 commit/push에서 같은 로고를 재사용한다.
+export const ART = [
   "██████╗  ██████╗ ██╗  ██╗ ██████╗ ███╗   ███╗ █████╗ ██████╗ ███████╗",
   "██╔══██╗██╔═══██╗██║ ██╔╝██╔═══██╗████╗ ████║██╔══██╗██╔══██╗██╔════╝",
   "██║  ██║██║   ██║█████╔╝ ██║   ██║██╔████╔██║███████║██║  ██║█████╗",
