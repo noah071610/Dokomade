@@ -73,25 +73,25 @@ const GITIGNORE_ENTRIES = [
   ".dokomade/perf.jsonl",
 ]
 
-interface HookHandler {
+export interface HookHandler {
   type: string
   command?: string
   prompt?: string
   model?: string
   timeout?: number
 }
-interface HookGroup {
+export interface HookGroup {
   matcher?: string
   hooks: HookHandler[]
 }
-type Settings = { hooks?: Record<string, HookGroup[]> } & Record<string, unknown>
+export type Settings = { hooks?: Record<string, HookGroup[]> } & Record<string, unknown>
 
 /**
  * Cursor's hooks.json is flatter: an event maps straight to a list of
  * handlers, with no matcher-carrying group wrapped around them, and the file
  * carries a top-level `version`.
  */
-type CursorHooks = { version?: number; hooks?: Record<string, HookHandler[]> } & Record<string, unknown>
+export type CursorHooks = { version?: number; hooks?: Record<string, HookHandler[]> } & Record<string, unknown>
 
 // ANSI color and formatting utilities
 const isColorSupported = !process.env.NO_COLOR && (Boolean(process.stdout.isTTY) || Boolean(process.env.FORCE_COLOR))
@@ -473,7 +473,7 @@ function codexHookCommand(root: string, file: string): string {
  * is not enough: with `$CLAUDE_PROJECT_DIR` or a global install the path never
  * contains it, and every `init` would register the hooks again.
  */
-function isOurHandler(h: HookHandler): boolean {
+export function isOurHandler(h: HookHandler): boolean {
   const entries = Object.values(HOOK_FILES)
   return (
     (typeof h.command === "string" && entries.some((f) => h.command!.includes(`hooks/${f}`))) ||
@@ -481,7 +481,7 @@ function isOurHandler(h: HookHandler): boolean {
   )
 }
 
-function isOurs(group: HookGroup): boolean {
+export function isOurs(group: HookGroup): boolean {
   return (group.hooks ?? []).some(isOurHandler)
 }
 

@@ -224,6 +224,7 @@ npx dokomade commit -am "fix: ..."   # manual message; skips AI generation
 npx dokomade connect notion          # or sheets; interactive, run it yourself
 npx dokomade sync --dry-run          # list the rows a sync would send, send nothing
 npx dokomade sync --all-authors      # send every checked-in author's rows (the GitHub workflow runs this)
+npx dokomade remove                  # strip the hooks and .dokomade/ (see Uninstall)
 ```
 
 - `commit` and `push` accept `--repo <name>` (multi-repository workspace), `-y` (skip the preview
@@ -257,8 +258,17 @@ initialized. Prefer a devDependency plus `npx dokomade init`.
 
 ## Uninstall
 
-1. Remove the dokomade entries (commands ending in `hooks/on-prompt.js`, `hooks/on-tool.js`,
-   `hooks/on-stop.js`) from `.claude/settings.json`, `.codex/hooks.json`, and `.cursor/hooks.json`.
-2. Delete `.dokomade/`. If you used sync, also delete `.github/workflows/dokomade-sync.yml` and the
-   `DOKOMADE_*` repository secrets or `.env` entries.
-3. Run `npm rm dokomade`. `docs/dokomade/` is your log history; keep or delete it.
+```bash
+npx dokomade remove          # add --logs to delete the log directory too
+npm rm dokomade
+```
+
+`remove` strips the dokomade hook entries from `.claude/settings.json`, `.codex/hooks.json`, and
+`.cursor/hooks.json` - leaving any hooks you added yourself in place - deletes `.dokomade/`, and
+deletes `.github/workflows/dokomade-sync.yml` when it is the generated one. Run it **before**
+`npm rm dokomade`, while the binary still exists, then restart your coding tool so the removed hooks
+stop firing.
+
+Two things are left on purpose: your logs in `docs/dokomade/` (pass `--logs` to delete them) and the
+`.gitignore` block, which includes the `.env` rule. Delete any `DOKOMADE_*` repository secrets or
+`.env` entries yourself.

@@ -4,6 +4,7 @@ import { Command } from "commander";
 import { commit, push } from "./commands/commit.js";
 import { connect } from "./commands/connect.js";
 import { init } from "./commands/init.js";
+import { remove } from "./commands/remove.js";
 import { status } from "./commands/status.js";
 import { sync } from "./commands/sync.js";
 
@@ -59,6 +60,16 @@ program
   .argument("<service>", "notion or sheets")
   .description("Configure Notion or Google Sheets sync")
   .action((service: string) => connect(service));
+
+program
+  .command("remove")
+  .alias("uninstall")
+  .description("Remove the dokomade hooks and .dokomade/ from this project")
+  .option("--logs", "also delete the log directory")
+  .option("-y, --yes", "skip the confirmation prompt")
+  .action(async (options: { logs?: boolean; yes?: boolean }) => {
+    await remove(options);
+  });
 
 program
   .command("sync")
